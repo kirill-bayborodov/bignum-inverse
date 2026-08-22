@@ -132,3 +132,11 @@ The previously duplicated a=3, a=5 and a=7 paths were consolidated behind one ru
 A 224-case differential harness compared ASM and C11 across divisors 3, 5, 7, 9, 11, 13 and 15, lengths 2–32 and four odd modulus patterns. Status, result length and digest matched for every case. The same harness passed under AddressSanitizer with leak detection. The full release suite remained `0 / 5 failed`.
 
 The scalar benchmark used 500 calls per point. ASM latency ranged from approximately 65–447 ns/call across the valid cases, while C11 ranged from approximately 16–266 microseconds/call; checksums and NO_INVERSE cases matched. For `a=7`, lengths divisible by the modulus-specific pattern correctly returned NO_INVERSE in both implementations and were not included as successful latency points.
+
+## Generic scalar-divisor kernel validation
+
+The duplicated scalar paths were replaced by one runtime-parameterized kernel for every odd scalar divisor `d` in 3..15. The implementation computes `2^64 mod d`, scans little-endian bignum words from most significant to least significant, searches the bounded multiplier `t`, and evaluates `(t*m+1)/d` with carry-aware 64-bit multiply/divide loops.
+
+The exhaustive C11 differential harness covered 224 cases across `d={3,5,7,9,11,13,15}`, lengths 2–32 and four odd modulus patterns. Status, result length and digest matched in every case. The same 224 cases passed under AddressSanitizer with leak detection. The release suite remained `0 / 5 failed`.
+
+The first candidate exposed an incorrect low-to-high modulus scan; this was corrected before acceptance. The accepted candidate is therefore the one represented by the differential PASS, not the initial failed attempt.
