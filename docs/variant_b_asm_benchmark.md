@@ -110,3 +110,17 @@ A third targeted path handles arbitrary odd 2–32-word moduli for `a=3`. It sca
 | 32 | 260,384.954 | 404.078 | 0.002x | identical |
 
 The full release suite passed with `0 / 5 failed`. Valid odd moduli were checked for lengths 2–32 under AddressSanitizer with leak detection, and the corresponding `m mod 3 == 0` cases were explicitly verified to return NO_INVERSE transactionally.
+
+## Multiword optimization step 4 — scalar a=5
+
+The fourth targeted path handles arbitrary odd 2–32-word moduli for `a=5`. Because `2^64 mod 5 = 1`, it scans `m mod 5`, selects the unique `t` in 1..4 satisfying `t*m+1 ≡ 0 (mod 5)`, and computes the quotient with the register-resident multiply/divide pass. Moduli divisible by 5 take the preserved NO_INVERSE fallback behavior.
+
+| Words | C11 ns/call | ASM step 4 ns/call | ASM/C11 | Checksums |
+|---:|---:|---:|---:|---|
+| 2 | 17,793.954 | 47.984 | 0.003x | identical |
+| 4 | 28,292.515 | 59.363 | 0.002x | identical |
+| 8 | 56,674.325 | 122.826 | 0.002x | identical |
+| 16 | 119,934.723 | 195.392 | 0.002x | identical |
+| 32 | 236,227.935 | 655.821 | 0.003x | identical |
+
+The full release suite passed with `0 / 5 failed`. Valid odd moduli of lengths 2–32 passed targeted AddressSanitizer execution with leak detection. The benchmark checksums match the C11 reference at every size.
