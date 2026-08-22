@@ -264,6 +264,290 @@ static void inverse_reduce(bignum_t *out, const bignum_t *input, const bignum_t 
 }
 
 /**
+ * @brief Multiplies two records and retains the low fixed-capacity words.
+ * @details High words are intentionally discarded for arithmetic modulo 2^k.
+ * @param[out] out Private product output.
+ * @param[in] left Borrowed normalized factor.
+ * @param[in] right Borrowed normalized factor.
+ * @return None; output is normalized.
+ */
+static void inverse_mod2_mul_low(bignum_t *out, const bignum_t *left, const bignum_t *right)
+{
+    const bignum_t left_copy = *left;
+    const bignum_t right_copy = *right;
+    memset(out, 0, sizeof(*out));
+    for (size_t i = 0U; i < left_copy.len && i < BIGNUM_CAPACITY; ++i) {
+        __uint128_t carry = 0U;
+        for (size_t j = 0U; j < right_copy.len && i + j < BIGNUM_CAPACITY; ++j) {
+            const __uint128_t p = (__uint128_t)left_copy.words[i] * right_copy.words[j]
+                                + out->words[i + j] + carry;
+            out->words[i + j] = (uint64_t)p;
+            carry = p >> 64U;
+        }
+        for (size_t j = i + right_copy.len; carry != 0U && j < BIGNUM_CAPACITY; ++j) {
+            const __uint128_t p = (__uint128_t)out->words[j] + carry;
+            out->words[j] = (uint64_t)p;
+            carry = p >> 64U;
+        }
+    }
+    out->len = BIGNUM_CAPACITY;
+    inverse_normalize(out);
+}
+
+/**
+ * @brief Masks a private record to its low bit_count bits.
+ * @param[in,out] value Private record to truncate.
+ * @param[in] bit_count Number of retained low bits, at most capacity bits.
+ * @return None; value is normalized after masking.
+ */
+static void inverse_mod2_mask(bignum_t *value, size_t bit_count)
+{
+    const size_t words = (bit_count + 63U) / 64U;
+    if (words == 0U) { memset(value, 0, sizeof(*value)); return; }
+    value->len = words;
+    if ((bit_count & 63U) != 0U)
+        value->words[words - 1U] &= (UINT64_C(1) << (bit_count & 63U)) - 1U;
+    inverse_normalize(value);
+}
+
+/**
+ * @brief Computes `(left-right) mod 2^bit_count` with fixed-capacity words.
+ * @param[out] out Private wrapped difference.
+ * @param[in] left Borrowed operand.
+ * @param[in] right Borrowed operand.
+ * @param[in] bit_count Modulus width in bits.
+ * @return None; out is normalized and masked.
+ */
+static void inverse_mod2_sub(bignum_t *out, const bignum_t *left,
+                             const bignum_t *right, size_t bit_count)
+{
+    memset(out, 0, sizeof(*out));
+    uint64_t borrow = 0U;
+    const size_t words = (bit_count + 63U) / 64U;
+    for (size_t i = 0U; i < words; ++i) {
+        const uint64_t lv = i < left->len ? left->words[i] : 0U;
+        const uint64_t rv = i < right->len ? right->words[i] : 0U;
+        const uint64_t next = borrow ? (lv <= rv) : (lv < rv);
+        out->words[i] = lv - rv - borrow;
+        borrow = next;
+    }
+    out->len = words;
+    inverse_mod2_mask(out, bit_count);
+}
+
+/**
+ * @brief Computes an inverse modulo 2^bit_count by Newton doubling.
+ * @param[out] output Private inverse residue.
+ * @param[in] input Borrowed odd input.
+ * @param[in] bit_count Width of the power-of-two modulus.
+ * @return Non-zero on success; zero when bit_count is outside capacity.
+ */
+static int inverse_mod2_newton(bignum_t *output, const bignum_t *input, size_t bit_count)
+{
+    if (bit_count == 0U || bit_count > BIGNUM_CAPACITY * 64U) return 0;
+    bignum_t x, product, two, factor;
+    memset(&x, 0, sizeof(x)); x.len = 1U; x.words[0] = 1U;
+    size_t precision = 1U;
+    while (precision < bit_count) {
+        const size_t next = precision * 2U < bit_count ? precision * 2U : bit_count;
+        inverse_mod2_mul_low(&product, input, &x);
+        inverse_mod2_mask(&product, next);
+        memset(&two, 0, sizeof(two)); two.len = 1U; two.words[0] = 2U;
+        inverse_mod2_sub(&factor, &two, &product, next);
+        inverse_mod2_mul_low(&x, &x, &factor);
+        inverse_mod2_mask(&x, next);
+        precision = next;
+    }
+    *output = x;
+    return 1;
+}
+
+/**
+ * @brief Subtracts modular residues without signed coefficient growth.
+ * @details Computes `(left - right) mod modulus` while retaining every coefficient
+ * in the canonical range. A one-word carry is allowed in the private wide sum.
+ * @param[out] out Private normalized residue.
+ * @param[in] left Borrowed residue below modulus.
+ * @param[in] right Borrowed residue below modulus.
+ * @param[in] modulus Borrowed odd positive modulus.
+ * @return None; out is fully overwritten.
+ */
+static void inverse_mod_sub(bignum_t *out, const bignum_t *left,
+                            const bignum_t *right, const bignum_t *modulus)
+{
+    if (inverse_cmp(left, right) >= 0) {
+        inverse_sub_raw(out, left, right);
+        return;
+    }
+    bignum_t complement;
+    uint64_t wide[BIGNUM_CAPACITY + 1U];
+    inverse_sub_raw(&complement, modulus, right);
+    const size_t length = inverse_add_wide(wide, &complement, left);
+    bignum_t low;
+    memset(&low, 0, sizeof(low));
+    low.len = length > BIGNUM_CAPACITY ? BIGNUM_CAPACITY : length;
+    for (size_t i = 0U; i < low.len; ++i) low.words[i] = wide[i];
+    if (length > BIGNUM_CAPACITY || inverse_cmp(&low, modulus) >= 0)
+        inverse_sub_raw(out, &low, modulus);
+    else
+        *out = low;
+}
+
+/**
+ * @brief Halves a residue coefficient modulo an odd modulus.
+ * @details Odd coefficients use `(coefficient + modulus)/2`; the wide temporary
+ * prevents overflow when both operands occupy the full public capacity.
+ * @param[in,out] coefficient Private residue in `[0,modulus)`.
+ * @param[in] modulus Borrowed odd positive modulus.
+ * @return None; coefficient remains canonical modulo modulus.
+ */
+static void inverse_mod_half(bignum_t *coefficient, const bignum_t *modulus)
+{
+    if (inverse_even(coefficient)) {
+        inverse_half(coefficient);
+        return;
+    }
+    uint64_t wide[BIGNUM_CAPACITY + 1U];
+    const bignum_t original = *coefficient;
+    const size_t length = inverse_add_wide(wide, &original, modulus);
+    uint64_t carry = 0U;
+    for (size_t i = length; i != 0U; --i) {
+        const uint64_t word = wide[i - 1U];
+        wide[i - 1U] = (word >> 1U) | (carry << 63U);
+        carry = word & 1U;
+    }
+    memset(coefficient, 0, sizeof(*coefficient));
+    coefficient->len = length > BIGNUM_CAPACITY ? BIGNUM_CAPACITY : length;
+    for (size_t i = 0U; i < coefficient->len; ++i) coefficient->words[i] = wide[i];
+    inverse_normalize(coefficient);
+}
+
+/**
+ * @brief Shifts a private record right by an arbitrary bit count.
+ * @param[in,out] value Private normalized record.
+ * @param[in] bits Number of low bits to discard.
+ * @return None; value is normalized.
+ */
+static void inverse_shift_right_bits(bignum_t *value, size_t bits)
+{
+    const size_t whole = bits / 64U, part = bits & 63U;
+    if (whole >= value->len) { memset(value, 0, sizeof(*value)); return; }
+    const size_t old_len = value->len;
+    for (size_t i = 0U; i + whole < old_len; ++i) {
+        uint64_t word = value->words[i + whole] >> part;
+        if (part != 0U && i + whole + 1U < old_len)
+            word |= value->words[i + whole + 1U] << (64U - part);
+        value->words[i] = word;
+    }
+    value->len = old_len - whole;
+    inverse_normalize(value);
+}
+
+/**
+ * @brief Multiplies bounded records without losing a fitting result.
+ * @param[out] out Private product record.
+ * @param[in] left Borrowed factor.
+ * @param[in] right Borrowed factor.
+ * @return Non-zero when the product fits the public capacity.
+ */
+static int inverse_mul_full(bignum_t *out, const bignum_t *left, const bignum_t *right)
+{
+    const bignum_t a = *left, b = *right;
+    uint64_t accum[BIGNUM_CAPACITY * 2U + 1U];
+    memset(accum, 0, sizeof(accum));
+    for (size_t i = 0U; i < a.len; ++i) {
+        __uint128_t carry = 0U;
+        for (size_t j = 0U; j < b.len; ++j) {
+            const size_t index = i + j;
+            const __uint128_t p = (__uint128_t)a.words[i] * b.words[j]
+                                + accum[index] + carry;
+            accum[index] = (uint64_t)p;
+            carry = p >> 64U;
+        }
+        size_t index = i + b.len;
+        while (carry != 0U && index < sizeof(accum) / sizeof(accum[0])) {
+            const __uint128_t p = (__uint128_t)accum[index] + carry;
+            accum[index] = (uint64_t)p;
+            carry = p >> 64U;
+            ++index;
+        }
+    }
+    size_t length = sizeof(accum) / sizeof(accum[0]);
+    while (length != 0U && accum[length - 1U] == 0U) --length;
+    if (length > BIGNUM_CAPACITY) return 0;
+    memset(out, 0, sizeof(*out)); out->len = length;
+    for (size_t i = 0U; i < length; ++i) out->words[i] = accum[i];
+    return 1;
+}
+
+/**
+ * @brief Detects whether a normalized modulus is exactly 2^k.
+ * @param[in] modulus Borrowed normalized modulus.
+ * @param[out] bit_count Receives k when the predicate is true.
+ * @return Non-zero only for a positive power of two.
+ */
+static int inverse_power2_width(const bignum_t *modulus, size_t *bit_count)
+{
+    size_t nonzero = 0U, index = 0U;
+    uint64_t word = 0U;
+    for (size_t i = 0U; i < modulus->len; ++i) {
+        if (modulus->words[i] != 0U) { ++nonzero; index = i; word = modulus->words[i]; }
+    }
+    if (nonzero != 1U || (word & (word - 1U)) != 0U) return 0;
+    size_t bit = 0U;
+    while ((word >>= 1U) != 0U) ++bit;
+    *bit_count = index * 64U + bit;
+    return *bit_count != 0U;
+}
+
+/**
+ * @brief Computes an inverse modulo an odd modulus with modular coefficients.
+ * @details Binary EEA keeps both residue coefficients bounded by modulus, so
+ * near-capacity inputs cannot overflow a signed Bezout magnitude. The caller
+ * handles even moduli with the legacy path until the CRT/Hensel component is
+ * integrated.
+ * @param[out] output Private inverse output.
+ * @param[in] input Reduced non-zero residue.
+ * @param[in] modulus Borrowed odd modulus greater than one.
+ * @return Non-zero when an inverse exists; zero for a non-coprime pair.
+ */
+static int inverse_mod_odd(bignum_t *output, const bignum_t *input,
+                           const bignum_t *modulus)
+{
+    bignum_t u = *input, v = *modulus, cu, cv;
+    memset(&cu, 0, sizeof(cu)); cu.len = 1U; cu.words[0] = 1U;
+    memset(&cv, 0, sizeof(cv));
+    while (u.len != 0U && v.len != 0U &&
+           inverse_cmp(&u, &(bignum_t){ .words = {1U}, .len = 1U }) != 0 &&
+           inverse_cmp(&v, &(bignum_t){ .words = {1U}, .len = 1U }) != 0) {
+        while (inverse_even(&u)) {
+            inverse_half(&u);
+            inverse_mod_half(&cu, modulus);
+        }
+        while (inverse_even(&v)) {
+            inverse_half(&v);
+            inverse_mod_half(&cv, modulus);
+        }
+        if (inverse_cmp(&u, &v) >= 0) {
+            bignum_t next;
+            inverse_sub_raw(&next, &u, &v); u = next;
+            inverse_mod_sub(&next, &cu, &cv, modulus); cu = next;
+        } else {
+            bignum_t next;
+            inverse_sub_raw(&next, &v, &u); v = next;
+            inverse_mod_sub(&next, &cv, &cu, modulus); cv = next;
+        }
+    }
+    bignum_t one;
+    memset(&one, 0, sizeof(one)); one.len = 1U; one.words[0] = 1U;
+    if (inverse_cmp(&u, &one) == 0) *output = cu;
+    else if (inverse_cmp(&v, &one) == 0) *output = cv;
+    else return 0;
+    inverse_normalize(output);
+    return 1;
+}
+
+/**
  * @brief Computes the modular inverse using signed binary extended Euclid.
  * @details The public parameter ownership and status contract are declared in
  * the header; this definition implements the same ABI without heap allocation.
@@ -284,6 +568,49 @@ bignum_inverse_status_t bignum_inverse(bignum_t *result, const bignum_t *a,
     inverse_reduce(&u, &u, &m);
     if (u.len == 0U) return BIGNUM_INVERSE_ERROR_NO_INVERSE;
     bignum_t base = u;
+    /* Variant B avoids signed coefficient growth for odd moduli. */
+    size_t power2_bits = 0U;
+    if (inverse_power2_width(&m, &power2_bits)) {
+        if (inverse_even(&u) || !inverse_mod2_newton(&output, &u, power2_bits))
+            return BIGNUM_INVERSE_ERROR_NO_INVERSE;
+        *result = output;
+        return BIGNUM_INVERSE_SUCCESS;
+    }
+    if ((m.words[0] & 1U) != 0U) {
+        if (!inverse_mod_odd(&output, &u, &m)) return BIGNUM_INVERSE_ERROR_NO_INVERSE;
+        *result = output;
+        return BIGNUM_INVERSE_SUCCESS;
+    }
+    /* Variant B CRT path for m = 2^k * q, q odd and q > 1. */
+    size_t even_bits = 0U;
+    bignum_t q = m;
+    while (q.len != 0U && (q.words[0] & 1U) == 0U) {
+        inverse_shift_right_bits(&q, 1U);
+        ++even_bits;
+    }
+    if (q.len != 0U && even_bits != 0U) {
+        if (inverse_even(&u)) return BIGNUM_INVERSE_ERROR_NO_INVERSE;
+        bignum_t a_mod_q, x_q, x_2, q_inv, diff, t, product;
+        inverse_reduce(&a_mod_q, &u, &q);
+        if (!inverse_mod_odd(&x_q, &a_mod_q, &q)) return BIGNUM_INVERSE_ERROR_NO_INVERSE;
+        if (!inverse_mod2_newton(&x_2, &u, even_bits)) return BIGNUM_INVERSE_ERROR_INTERNAL;
+        if (!inverse_mod2_newton(&q_inv, &q, even_bits)) return BIGNUM_INVERSE_ERROR_INTERNAL;
+        inverse_mod2_sub(&diff, &x_2, &x_q, even_bits);
+        inverse_mod2_mul_low(&t, &diff, &q_inv);
+        inverse_mod2_mask(&t, even_bits);
+        if (!inverse_mul_full(&product, &q, &t)) return BIGNUM_INVERSE_ERROR_INTERNAL;
+        {
+            uint64_t wide[BIGNUM_CAPACITY + 1U];
+            const size_t length = inverse_add_wide(wide, &x_q, &product);
+            if (length > BIGNUM_CAPACITY) return BIGNUM_INVERSE_ERROR_INTERNAL;
+            memset(&output, 0, sizeof(output)); output.len = length;
+            for (size_t i = 0U; i < length; ++i) output.words[i] = wide[i];
+            inverse_normalize(&output);
+        }
+        if (inverse_cmp(&output, &m) >= 0) return BIGNUM_INVERSE_ERROR_INTERNAL;
+        *result = output;
+        return BIGNUM_INVERSE_SUCCESS;
+    }
     memset(&coefficient_u, 0, sizeof(coefficient_u));
     coefficient_u.magnitude.len = 1U; coefficient_u.magnitude.words[0] = 1U;
     memset(&coefficient_v, 0, sizeof(coefficient_v));
