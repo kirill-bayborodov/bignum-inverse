@@ -81,3 +81,18 @@ A dedicated register-resident path now handles `a=2` with an odd modulus of 2–
 The independent harness used odd moduli `2^(64n)-1`, `2^(64n)-3` and an alternating-word odd modulus, with 1,000 calls per size. A dedicated expected-value test covered every length from 2 through 32 and all three modulus classes under AddressSanitizer with leak detection; it passed without diagnostics. The full five-binary release suite also passed with `0 / 5 failed`.
 
 This is a targeted multiword optimization, not yet a general multiword EEA optimization. The next candidate should address the common odd-modulus path for arbitrary `a` while retaining this constant-time-specialized case and the generated fallback.
+
+## Multiword optimization step 2 — scalar a=7
+
+The next targeted path handles arbitrary odd moduli of 2–32 words when `a=7`. It computes `m mod 7` using the base-2^64 recurrence, selects `t` such that `t*m+1` is divisible by 7, and evaluates `(t*m+1)/7` with a register-resident word multiply/divide pass. The generated Variant B implementation remains the fallback for other scalar values and all general multiword operands.
+
+| Words | C11 ns/call | ASM step 2 ns/call | ASM/C11 | Checksums |
+|---:|---:|---:|---:|---|
+| 1 | 7,722.120 | 116.069 | 0.015x | identical |
+| 2 | 12,977.636 | 45.448 | 0.004x | identical |
+| 4 | 25,852.565 | 49.813 | 0.002x | identical |
+| 8 | 47,458.784 | 89.857 | 0.002x | identical |
+| 16 | 108,137.497 | 173.849 | 0.002x | identical |
+| 32 | 251,955.744 | 450.943 | 0.002x | identical |
+
+The full release suite passed with `0 / 5 failed`. The dedicated multiword correctness harness passed all lengths 2–32 under AddressSanitizer with leak detection. During development, two ABI defects were found and corrected: callee-saved registers are now preserved before modification, and the scalar remainder recurrence correctly accounts for `2^64 mod 7 = 2`.

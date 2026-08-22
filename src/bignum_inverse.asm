@@ -2007,6 +2007,116 @@ bignum_inverse:
     cmp rax, 264
     jb .Lgeneric_entry
 .Lcheck_lengths:
+    ; Multiword scalar-a specialization for a=7: x=(t*m+1)/7,
+    ; where t is selected from m mod 7 so the numerator is divisible by 7.
+    cmp qword [rsi+256], 1
+    jne .Lfast_a2_check
+    cmp qword [rsi], 7
+    jne .Lfast_a2_check
+    mov r10, [rdx+256]
+    cmp r10, 2
+    jb .Lfast_a2_check
+    cmp r10, 32
+    ja .Lgeneric_entry
+    push r12
+    push r13
+    push r14
+    push r15
+    mov r13, rdx
+    mov r14, rdi
+    mov r11, 7
+    xor r9d, r9d
+    xor r15d, r15d
+.Lfast_a7_mod:
+    mov rax, [r13+r15*8]
+    xor edx, edx
+    div r11
+    add r9, r9
+    add rdx, r9
+    mov rax, rdx
+    xor edx, edx
+    div r11
+    mov r9, rdx
+    inc r15
+    cmp r15, r10
+    jb .Lfast_a7_mod
+    cmp r9, 1
+    je .Lfast_a7_t6
+    cmp r9, 2
+    je .Lfast_a7_t3
+    cmp r9, 3
+    je .Lfast_a7_t2
+    cmp r9, 4
+    je .Lfast_a7_t5
+    cmp r9, 5
+    je .Lfast_a7_t4
+    cmp r9, 6
+    je .Lfast_a7_t1
+    jmp .Lfast_a7_no_inverse
+.Lfast_a7_t6:
+    mov r12, 6
+    jmp .Lfast_a7_mul
+.Lfast_a7_t5:
+    mov r12, 5
+    jmp .Lfast_a7_mul
+.Lfast_a7_t4:
+    mov r12, 4
+    jmp .Lfast_a7_mul
+.Lfast_a7_t3:
+    mov r12, 3
+    jmp .Lfast_a7_mul
+.Lfast_a7_t2:
+    mov r12, 2
+    jmp .Lfast_a7_mul
+.Lfast_a7_t1:
+    mov r12, 1
+.Lfast_a7_mul:
+    xor r15d, r15d
+    xor ecx, ecx
+.Lfast_a7_mul_loop:
+    mov rax, [r13+r15*8]
+    mul r12
+    add rax, rcx
+    adc rdx, 0
+    test r15, r15
+    jnz .Lfast_a7_store
+    add rax, 1
+    adc rdx, 0
+.Lfast_a7_store:
+    mov [r14+r15*8], rax
+    mov rcx, rdx
+    inc r15
+    cmp r15, r10
+    jb .Lfast_a7_mul_loop
+    mov r15, r10
+    dec r15
+    mov rdx, rcx
+.Lfast_a7_div_loop:
+    mov rax, [r14+r15*8]
+    div r11
+    mov [r14+r15*8], rax
+    dec r15
+    jns .Lfast_a7_div_loop
+    mov [r14+256], r10
+    lea rdi, [r14+r10*8]
+    mov rcx, 32
+    sub rcx, r10
+    xor eax, eax
+    rep stosq
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    xor eax, eax
+    ret
+.Lfast_a7_no_inverse:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    mov eax, -5
+    ret
+.Lfast_a2_check:
     ; Multiword special case: 2^{-1} mod m = (m+1)/2 for odd m.
     cmp qword [rsi+256], 1
     jne .Lcheck_oneword
