@@ -188,3 +188,9 @@ The kernel was compared against the C11 reference on 50,000 deterministic random
 | 2-word modulus, large scalar | 18,847.357 | 531.951 | identical |
 
 The direct call path preserves SysV ABI stack alignment and saves `rsi`/`rdx` around the dispatcher call so an unsuccessful native attempt can safely enter the generic fallback.
+
+## Native 3-word tuning2
+
+The native x86-64 YASM three-word kernel was tuned to avoid the redundant modulus self-copy after converting immutable modulus accesses to direct `[rbx+offset]` loads. Public differential parity passed 20,000/20,000 cases, the same workload passed ASan with leak detection, and the full release suite remained `0 / 5 failed`.
+
+Five repeated benchmark runs used three valid normalized odd three-word workloads. Median latency was approximately 35.5 us ASM versus 36.1 us C11 for case 0, 37.1 us versus 38.2 us for case 1, and 35.2 us versus 36.1 us for case 2. This corresponds to median improvements of approximately 1.5%, 3.1%, and 2.7%, respectively. The gain is modest and subject to host scheduling noise; it is recorded as a positive tuning result, not as a large performance claim. The tuning2 source is currently local and has not been committed or pushed.
