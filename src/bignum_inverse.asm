@@ -2007,6 +2007,39 @@ bignum_inverse:
     cmp rax, 264
     jb .Lgeneric_entry
 .Lcheck_lengths:
+    ; Multiword negation fast path: (-1)^{-1} mod m = -1 mod m.
+    ; Recognize a == m-1 without modifying either borrowed input.
+    mov r10, [rsi+256]
+    cmp r10, 1
+    jb .Lidentity_check
+    cmp r10, 32
+    ja .Lidentity_check
+    cmp r10, [rdx+256]
+    jne .Lidentity_check
+    xor eax, eax
+    mov r11, 1
+.Lnegone_compare:
+    mov r8, [rdx+rax*8]
+    sub r8, r11
+    setc r11b
+    movzx r11, r11b
+    cmp r8, [rsi+rax*8]
+    jne .Lidentity_check
+    inc rax
+    cmp rax, r10
+    jb .Lnegone_compare
+    mov rcx, r10
+    mov r8, rdi
+    rep movsq
+    mov qword [r8+256], r10
+    lea rdi, [r8+r10*8]
+    mov rcx, 32
+    sub rcx, r10
+    xor eax, eax
+    rep stosq
+    xor eax, eax
+    ret
+.Lidentity_check:
     ; Multiword identity fast path: 1^{-1} mod m = 1 for m > 1.
     cmp qword [rsi+256], 1
     jne .Lscalar_divisor_entry

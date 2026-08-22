@@ -157,3 +157,20 @@ A dedicated test covered every modulus length 1–32 under AddressSanitizer with
 | 32 | 2,748.193 | 44.813 | identical |
 
 This is a safe dispatch optimization, not yet a general EEA arithmetic replacement. Arbitrary multiword `a` continues through the generated Variant B kernel until a subsequent compare/subtract/halve step is proven independently.
+
+## Multiword compare/subtract hot-path step — a = m - 1
+
+The first direct compare/subtract optimization for arbitrary multiword operands recognizes `a = m - 1` by subtracting one from the modulus from least-significant to most-significant word and comparing each word without modifying borrowed inputs. On a match, the result is copied and normalized transactionally; otherwise execution falls through to the existing Variant B EEA path.
+
+The exact probe covered lengths 1–32, including the full-capacity 2048-bit case, and passed under AddressSanitizer with leak detection. The full release suite passed with `0 / 5 failed`.
+
+| Modulus words | C11 ns/call | ASM compare/subtract path ns/call | Checksums |
+|---:|---:|---:|---|
+| 1 | 2,452.315 | 50.582 | identical |
+| 2 | 11,927.089 | 50.468 | identical |
+| 4 | 23,961.473 | 51.948 | identical |
+| 8 | 48,667.877 | 51.314 | identical |
+| 16 | 106,575.565 | 56.860 | identical |
+| 32 | 297,881.063 | 99.672 | identical |
+
+A development probe initially exposed a high-to-low borrow-order error; the corrected implementation uses the required low-to-high subtraction direction and was re-run through the complete regression before acceptance.
