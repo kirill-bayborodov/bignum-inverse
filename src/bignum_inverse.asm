@@ -2007,6 +2007,53 @@ bignum_inverse:
     cmp rax, 264
     jb .Lgeneric_entry
 .Lcheck_lengths:
+    ; Multiword special case: 2^{-1} mod m = (m+1)/2 for odd m.
+    cmp qword [rsi+256], 1
+    jne .Lcheck_oneword
+    cmp qword [rsi], 2
+    jne .Lcheck_oneword
+    mov r10, [rdx+256]
+    cmp r10, 2
+    jb .Lcheck_oneword
+    cmp r10, 32
+    ja .Lgeneric_entry
+    mov r9, [rdx+r10*8-8]
+    test r9b, 1
+    jz .Lcheck_oneword
+    mov r8, rdi
+    mov rsi, rdx
+    mov rdi, r8
+    mov rcx, r10
+    rep movsq
+    xor r11d, r11d
+    mov r11b, 1
+    xor eax, eax
+.Lfast_add_one:
+    add [r8+rax*8], r11
+    setc r11b
+    inc rax
+    cmp rax, r10
+    jb .Lfast_add_one
+    mov rax, r10
+    dec rax
+    mov rcx, r11
+.Lfast_shift_right:
+    mov r11, [r8+rax*8]
+    mov rdx, r11
+    shrd r11, rcx, 1
+    mov [r8+rax*8], r11
+    mov rcx, rdx
+    dec rax
+    jns .Lfast_shift_right
+    mov [r8+256], r10
+    lea rdi, [r8+r10*8]
+    mov rcx, 32
+    sub rcx, r10
+    xor eax, eax
+    rep stosq
+    xor eax, eax
+    ret
+.Lcheck_oneword:
     cmp qword [rsi+256], 1
     jne .Lgeneric_entry
     cmp qword [rdx+256], 1

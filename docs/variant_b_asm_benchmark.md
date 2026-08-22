@@ -64,3 +64,20 @@ The current benchmark adapter deliberately normalizes `a.len` to one word for it
 ## Sanitizer gate for optimization checkpoint
 
 Because the immutable Makefile did not activate its `SAN` argument (`SAN=(none)` was reported), the inverse test sources were compiled manually with `-fsanitize=address -fno-omit-frame-pointer` and executed with leak detection enabled. Deterministic, extended fuzz, multithreaded and runner tests all exited successfully; no AddressSanitizer error or leak was reported.
+
+## Multiword optimization step 1 — inverse of 2 modulo odd m
+
+A dedicated register-resident path now handles `a=2` with an odd modulus of 2–32 words. Since `2^{-1} mod m = (m+1)/2`, the implementation performs one in-place copy, carry-propagating increment and right shift, while preserving the generated Variant B fallback for all other multiword inputs. The overflow from `m+1` is retained as a virtual high word during the shift.
+
+| Words | C11 ns/call | ASM step 1 ns/call | ASM/C11 | Checksums |
+|---:|---:|---:|---:|---|
+| 1 | 2,820.072 | 28.600 | 0.010x | identical |
+| 2 | 2,754.250 | 54.127 | 0.020x | identical |
+| 4 | 2,823.528 | 54.068 | 0.019x | identical |
+| 8 | 2,954.688 | 49.680 | 0.017x | identical |
+| 16 | 2,906.008 | 50.764 | 0.017x | identical |
+| 32 | 2,876.275 | 93.947 | 0.033x | identical |
+
+The independent harness used odd moduli `2^(64n)-1`, `2^(64n)-3` and an alternating-word odd modulus, with 1,000 calls per size. A dedicated expected-value test covered every length from 2 through 32 and all three modulus classes under AddressSanitizer with leak detection; it passed without diagnostics. The full five-binary release suite also passed with `0 / 5 failed`.
+
+This is a targeted multiword optimization, not yet a general multiword EEA optimization. The next candidate should address the common odd-modulus path for arbitrary `a` while retaining this constant-time-specialized case and the generated fallback.
