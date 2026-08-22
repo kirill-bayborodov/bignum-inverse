@@ -2007,6 +2007,95 @@ bignum_inverse:
     cmp rax, 264
     jb .Lgeneric_entry
 .Lcheck_lengths:
+    ; Multiword scalar-a specialization for a=3: x=(t*m+1)/3.
+    ; Since 2^64 mod 3 is one, the remainder scan is rem+word mod 3.
+    cmp qword [rsi+256], 1
+    jne .Lfast_a7_check
+    cmp qword [rsi], 3
+    jne .Lfast_a7_check
+    mov r10, [rdx+256]
+    cmp r10, 2
+    jb .Lfast_a2_check
+    cmp r10, 32
+    ja .Lgeneric_entry
+    push r12
+    push r13
+    push r14
+    push r15
+    mov r13, rdx
+    mov r14, rdi
+    mov r11, 3
+    xor r9d, r9d
+    xor r15d, r15d
+.Lfast_a3_mod:
+    mov rax, [r13+r15*8]
+    xor edx, edx
+    div r11
+    add rdx, r9
+    mov rax, rdx
+    xor edx, edx
+    div r11
+    mov r9, rdx
+    inc r15
+    cmp r15, r10
+    jb .Lfast_a3_mod
+    cmp r9, 1
+    je .Lfast_a3_t2
+    cmp r9, 2
+    je .Lfast_a3_t1
+    jmp .Lfast_a3_no_inverse
+.Lfast_a3_t2:
+    mov r12, 2
+    jmp .Lfast_a3_mul
+.Lfast_a3_t1:
+    mov r12, 1
+.Lfast_a3_mul:
+    xor r15d, r15d
+    xor ecx, ecx
+.Lfast_a3_mul_loop:
+    mov rax, [r13+r15*8]
+    mul r12
+    add rax, rcx
+    adc rdx, 0
+    test r15, r15
+    jnz .Lfast_a3_store
+    add rax, 1
+    adc rdx, 0
+.Lfast_a3_store:
+    mov [r14+r15*8], rax
+    mov rcx, rdx
+    inc r15
+    cmp r15, r10
+    jb .Lfast_a3_mul_loop
+    mov r15, r10
+    dec r15
+    mov rdx, rcx
+.Lfast_a3_div_loop:
+    mov rax, [r14+r15*8]
+    div r11
+    mov [r14+r15*8], rax
+    dec r15
+    jns .Lfast_a3_div_loop
+    mov [r14+256], r10
+    lea rdi, [r14+r10*8]
+    mov rcx, 32
+    sub rcx, r10
+    xor eax, eax
+    rep stosq
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    xor eax, eax
+    ret
+.Lfast_a3_no_inverse:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    mov eax, -5
+    ret
+.Lfast_a7_check:
     ; Multiword scalar-a specialization for a=7: x=(t*m+1)/7,
     ; where t is selected from m mod 7 so the numerator is divisible by 7.
     cmp qword [rsi+256], 1

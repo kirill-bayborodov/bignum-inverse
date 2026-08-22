@@ -96,3 +96,17 @@ The next targeted path handles arbitrary odd moduli of 2–32 words when `a=7`. 
 | 32 | 251,955.744 | 450.943 | 0.002x | identical |
 
 The full release suite passed with `0 / 5 failed`. The dedicated multiword correctness harness passed all lengths 2–32 under AddressSanitizer with leak detection. During development, two ABI defects were found and corrected: callee-saved registers are now preserved before modification, and the scalar remainder recurrence correctly accounts for `2^64 mod 7 = 2`.
+
+## Multiword optimization step 3 — scalar a=3
+
+A third targeted path handles arbitrary odd 2–32-word moduli for `a=3`. It scans `m mod 3`, selects `t=1` or `t=2`, and computes `(t*m+1)/3` using the same register-resident multiply/divide structure. Moduli divisible by 3 correctly return `BIGNUM_INVERSE_ERROR_NO_INVERSE` without modifying the destination.
+
+| Words | C11 ns/call | ASM step 3 ns/call | ASM/C11 | Checksums |
+|---:|---:|---:|---:|---|
+| 2 | 16,347.785 | 61.904 | 0.004x | identical |
+| 4 | 29,936.382 | 77.403 | 0.003x | identical |
+| 8 | 58,169.775 | 91.240 | 0.002x | identical |
+| 16 | 115,005.245 | 173.748 | 0.002x | identical |
+| 32 | 260,384.954 | 404.078 | 0.002x | identical |
+
+The full release suite passed with `0 / 5 failed`. Valid odd moduli were checked for lengths 2–32 under AddressSanitizer with leak detection, and the corresponding `m mod 3 == 0` cases were explicitly verified to return NO_INVERSE transactionally.
