@@ -194,3 +194,35 @@ The direct call path preserves SysV ABI stack alignment and saves `rsi`/`rdx` ar
 The native x86-64 YASM three-word kernel was tuned to avoid the redundant modulus self-copy after converting immutable modulus accesses to direct `[rbx+offset]` loads. Public differential parity passed 20,000/20,000 cases, the same workload passed ASan with leak detection, and the full release suite remained `0 / 5 failed`.
 
 Five repeated benchmark runs used three valid normalized odd three-word workloads. Median latency was approximately 35.5 us ASM versus 36.1 us C11 for case 0, 37.1 us versus 38.2 us for case 1, and 35.2 us versus 36.1 us for case 2. This corresponds to median improvements of approximately 1.5%, 3.1%, and 2.7%, respectively. The gain is modest and subject to host scheduling noise; it is recorded as a positive tuning result, not as a large performance claim. The tuning2 source is currently local and has not been committed or pushed.
+
+## Native 4-word arbitrary-a EEA kernel — Variant B
+
+The verified Variant B native four-word kernel is now connected to the public dispatcher for normalized odd four-word moduli and reduced operands of one through four words. Unsupported shapes and nonzero candidate statuses retain the existing native 3-word, native 2-word, scalar, or generated Variant B fallback chain. The dispatcher preserves SysV AMD64 stack alignment and restores its saved argument registers before fallback.
+
+The direct candidate differential passed 30,000/30,000 deterministic randomized cases against the C11 reference. The public-dispatcher differential independently passed 30,000/30,000 cases, including successful inverses and `BIGNUM_INVERSE_ERROR_NO_INVERSE` status parity. Release regression passed all five test binaries (`0 / 5 failed`), and the sanitizer regression completed without AddressSanitizer diagnostics.
+
+The immutable repository benchmark target could not collect `cache-misses:u` in the sandbox because that hardware event is unavailable. Therefore, the following controlled matrix uses the same normalized four-word operands, 2,000 timed calls per implementation and workload, identical checksum validation, `-O3 -march=x86-64`, and `CLOCK_MONOTONIC` elapsed time. The measurements target the direct C11 reference and direct native YASM candidate to isolate the four-word EEA arithmetic rather than dispatcher noise.
+
+| Workload | C11 ns/call | Native ASM ns/call | ASM/C11 | Checksum |
+|---|---:|---:|---:|---|
+| `a=3`, odd 4-word modulus | 32,990.11 | 3,390.91 | 0.103x | identical |
+| `a=7`, odd 4-word modulus | 29,446.35 | 2,391.49 | 0.081x | identical |
+| large 4-word `a`, odd 4-word modulus | 52,540.37 | 3,683.28 | 0.070x | identical |
+
+The native kernel is approximately 9.7x, 12.3x and 14.3x faster on these three controlled points, respectively. These results are workload-specific timing measurements rather than a claim about every generic CRT or even-modulus path; those paths remain on the established fallback implementation. The four-word candidate therefore satisfies the current performance gate for the targeted odd-modulus workload while retaining the C11-equivalent fallback behavior outside its supported domain.
+
+The controlled harness and raw output were kept outside the repository under `/tmp/inverse_4word_bench.c` and `/tmp/inverse_4word_bench.txt`; the repository report records the reproducible method and measured results.
+
+## Quality Gate checklist — native 4-word step
+
+| Artifact / gate | Result | Evidence |
+|---|---|---|
+| Candidate direct differential | PASS | 30,000/30,000 versus C11 |
+| Public dispatcher differential | PASS | 30,000/30,000, status and output parity |
+| Release deterministic and extended tests | PASS | `make test CONFIG=release`, 0/5 failed |
+| Multithreaded and adapter tests | PASS | Included in release and sanitizer suites |
+| Sanitizer regression | PASS | `make test CONFIG=debug SAN=asan`; no ASan diagnostics |
+| Targeted 4-word benchmark | PASS | Three workloads, identical checksums, ASM faster |
+| Makefile / CI changes | NONE | No modifications made |
+
+References: [1](/home/ubuntu/projects/bignum-inverse/docs/variant_b_design.md), [2](/home/ubuntu/projects/bignum-inverse/docs/variant_b_c11_report.md)
