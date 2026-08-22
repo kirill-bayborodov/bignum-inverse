@@ -1,0 +1,449 @@
+        -:    0:Source:src/bignum_inverse.c
+        -:    0:Graph:/tmp/inv_cov_final_mt-bignum_inverse.gcno
+        -:    0:Data:/tmp/inv_cov_final_mt-bignum_inverse.gcda
+        -:    0:Runs:1
+        -:    1:/**
+        -:    2: * @file bignum_inverse.c
+        -:    3: * @brief C11 reference implementation of modular multiplicative inverse.
+        -:    4: * @version 1.0.0
+        -:    5: * @date 2026-08-22
+        -:    6: * @details Uses Stein's binary extended Euclidean algorithm. Residues are
+        -:    7: * unsigned bignum_t values and Bezout coefficients are fixed-size signed
+        -:    8: * magnitudes, preserving the exact identity for both odd and even moduli.
+        -:    9: */
+        -:   10:#include "bignum_inverse.h"
+        -:   11:#include <stdint.h>
+        -:   12:#include <string.h>
+        -:   13:
+        -:   14:/** @brief Fixed-size signed magnitude used by the private binary EEA state. */
+        -:   15:typedef struct inverse_signed {
+        -:   16:    bignum_t magnitude; /**< Unsigned fixed-capacity coefficient magnitude. */
+        -:   17:    int negative; /**< Non-zero when the coefficient is represented as negative. */
+        -:   18:} inverse_signed_t;
+        -:   19:
+        -:   20:/** @brief Returns whether two complete caller-owned records overlap. */
+function inverse_overlap called 32000 returned 100% blocks executed 80%
+    32000:   21:static int inverse_overlap(const bignum_t *left, const bignum_t *right)
+        -:   22:{
+    32000:   23:    const uintptr_t a = (uintptr_t)left;
+    32000:   24:    const uintptr_t b = (uintptr_t)right;
+    32000:   25:    const uintptr_t size = (uintptr_t)sizeof(bignum_t);
+   32000*:   26:    return a < b ? (b - a) < size : (a - b) < size;
+branch  0 taken 0 (fallthrough)
+branch  1 taken 32000
+        -:   27:}
+        -:   28:
+        -:   29:/** @brief Normalizes a private unsigned record and clears its unused tail. */
+function inverse_normalize called 5980000 returned 100% blocks executed 90%
+  5980000:   30:static void inverse_normalize(bignum_t *value)
+        -:   31:{
+  5980000:   32:    size_t length = value->len;
+ 5980000*:   33:    if (length > BIGNUM_CAPACITY) length = BIGNUM_CAPACITY;
+branch  0 taken 0 (fallthrough)
+branch  1 taken 5980000
+ 71000000:   34:    while (length != 0U && value->words[length - 1U] == 0U) --length;
+branch  0 taken 69468000 (fallthrough)
+branch  1 taken 1532000
+branch  2 taken 65020000
+branch  3 taken 4448000 (fallthrough)
+192892000:   35:    for (size_t i = length; i < BIGNUM_CAPACITY; ++i) value->words[i] = 0U;
+branch  0 taken 186912000
+branch  1 taken 5980000 (fallthrough)
+  5980000:   36:    value->len = length;
+  5980000:   37:}
+        -:   38:
+        -:   39:/** @brief Compares two normalized unsigned private records. */
+function inverse_cmp called 3174000 returned 100% blocks executed 100%
+  3174000:   40:static int inverse_cmp(const bignum_t *left, const bignum_t *right)
+        -:   41:{
+  3174000:   42:    if (left->len != right->len) return left->len > right->len ? 1 : -1;
+branch  0 taken 1564000 (fallthrough)
+branch  1 taken 1610000
+branch  2 taken 16000 (fallthrough)
+branch  3 taken 1548000
+  1642000:   43:    for (size_t i = left->len; i != 0U; --i) {
+branch  0 taken 1610000
+branch  1 taken 32000 (fallthrough)
+  1610000:   44:        if (left->words[i - 1U] != right->words[i - 1U])
+branch  0 taken 1578000 (fallthrough)
+branch  1 taken 32000
+  1578000:   45:            return left->words[i - 1U] > right->words[i - 1U] ? 1 : -1;
+branch  0 taken 760000 (fallthrough)
+branch  1 taken 818000
+        -:   46:    }
+    32000:   47:    return 0;
+        -:   48:}
+        -:   49:
+        -:   50:/** @brief Subtracts right from left when left is at least right. */
+function inverse_sub_raw called 550000 returned 100% blocks executed 91%
+   550000:   51:static void inverse_sub_raw(bignum_t *out, const bignum_t *left, const bignum_t *right)
+        -:   52:{
+   550000:   53:    uint64_t borrow = 0U;
+   550000:   54:    memset(out, 0, sizeof(*out));
+   550000:   55:    out->len = left->len;
+  1100000:   56:    for (size_t i = 0U; i < left->len; ++i) {
+branch  0 taken 550000
+branch  1 taken 550000 (fallthrough)
+   550000:   57:        const uint64_t lv = left->words[i];
+   550000:   58:        const uint64_t rv = i < right->len ? right->words[i] : 0U;
+branch  0 taken 518000 (fallthrough)
+branch  1 taken 32000
+  550000*:   59:        const uint64_t next = borrow ? (lv <= rv) : (lv < rv);
+branch  0 taken 0 (fallthrough)
+branch  1 taken 550000
+   550000:   60:        out->words[i] = lv - rv - borrow;
+   550000:   61:        borrow = next;
+        -:   62:    }
+   550000:   63:    inverse_normalize(out);
+call    0 returned 550000
+   550000:   64:}
+        -:   65:
+        -:   66:/** @brief Adds two unsigned records into a CAPACITY+1 word buffer. */
+function inverse_add_wide called 698000 returned 100% blocks executed 100%
+   698000:   67:static size_t inverse_add_wide(uint64_t *out, const bignum_t *left, const bignum_t *right)
+        -:   68:{
+   698000:   69:    uint64_t carry = 0U;
+   698000:   70:    const size_t length = left->len > right->len ? left->len : right->len;
+   698000:   71:    memset(out, 0, (BIGNUM_CAPACITY + 1U) * sizeof(*out));
+  1396000:   72:    for (size_t i = 0U; i < length; ++i) {
+branch  0 taken 698000
+branch  1 taken 698000 (fallthrough)
+   698000:   73:        const uint64_t lv = i < left->len ? left->words[i] : 0U;
+branch  0 taken 682000 (fallthrough)
+branch  1 taken 16000
+   698000:   74:        const uint64_t rv = i < right->len ? right->words[i] : 0U;
+branch  0 taken 492000 (fallthrough)
+branch  1 taken 206000
+   698000:   75:        const uint64_t sum = lv + rv;
+   698000:   76:        const uint64_t c1 = sum < lv;
+   698000:   77:        const uint64_t next = sum + carry;
+   698000:   78:        const uint64_t c2 = next < sum;
+   698000:   79:        out[i] = next;
+   698000:   80:        carry = c1 | c2;
+        -:   81:    }
+   698000:   82:    out[length] = carry;
+   698000:   83:    return length + (carry != 0U);
+        -:   84:}
+        -:   85:
+        -:   86:/** @brief Divides a normalized unsigned record by two in place. */
+function inverse_half called 1398000 returned 100% blocks executed 100%
+  1398000:   87:static void inverse_half(bignum_t *value)
+        -:   88:{
+  1398000:   89:    uint64_t carry = 0U;
+  2796000:   90:    for (size_t i = value->len; i != 0U; --i) {
+branch  0 taken 1398000
+branch  1 taken 1398000 (fallthrough)
+  1398000:   91:        const uint64_t word = value->words[i - 1U];
+  1398000:   92:        value->words[i - 1U] = (word >> 1U) | (carry << 63U);
+  1398000:   93:        carry = word & 1U;
+        -:   94:    }
+  1398000:   95:    inverse_normalize(value);
+call    0 returned 1398000
+  1398000:   96:}
+        -:   97:
+        -:   98:/** @brief Returns whether a normalized unsigned record is even. */
+function inverse_even called 2144000 returned 100% blocks executed 100%
+  2144000:   99:static int inverse_even(const bignum_t *value)
+        -:  100:{
+  2144000:  101:    return value->len == 0U || (value->words[0] & 1U) == 0U;
+branch  0 taken 2144000 (fallthrough)
+branch  1 taken 0
+branch  2 taken 1398000 (fallthrough)
+branch  3 taken 746000
+        -:  102:}
+        -:  103:
+        -:  104:/** @brief Normalizes signed magnitude zero to a non-negative representation. */
+function inverse_signed_normalize called 1936000 returned 100% blocks executed 75%
+  1936000:  105:static void inverse_signed_normalize(inverse_signed_t *value)
+        -:  106:{
+  1936000:  107:    inverse_normalize(&value->magnitude);
+call    0 returned 1936000
+ 1936000*:  108:    if (value->magnitude.len == 0U) value->negative = 0;
+branch  0 taken 0 (fallthrough)
+branch  1 taken 1936000
+  1936000:  109:}
+        -:  110:
+        -:  111:/** @brief Computes signed left-right, assuming the output fits CAPACITY words. */
+function inverse_signed_sub called 1004000 returned 100% blocks executed 95%
+  1004000:  112:static void inverse_signed_sub(inverse_signed_t *out, const inverse_signed_t *left,
+        -:  113:                               const inverse_signed_t *right)
+        -:  114:{
+  1004000:  115:    inverse_signed_t a = *left;
+  1004000:  116:    inverse_signed_t b = *right;
+  1004000:  117:    if (a.negative != b.negative) {
+branch  0 taken 698000 (fallthrough)
+branch  1 taken 306000
+        -:  118:        uint64_t wide[BIGNUM_CAPACITY + 1U];
+   698000:  119:        const size_t length = inverse_add_wide(wide, &a.magnitude, &b.magnitude);
+call    0 returned 698000
+   698000:  120:        memset(out, 0, sizeof(*out));
+  698000*:  121:        if (length > BIGNUM_CAPACITY) return;
+branch  0 taken 0 (fallthrough)
+branch  1 taken 698000
+   698000:  122:        out->magnitude.len = length;
+  1396000:  123:        for (size_t i = 0U; i < length; ++i) out->magnitude.words[i] = wide[i];
+branch  0 taken 698000
+branch  1 taken 698000 (fallthrough)
+   698000:  124:        out->negative = a.negative;
+   698000:  125:        inverse_signed_normalize(out);
+call    0 returned 698000
+   698000:  126:        return;
+        -:  127:    }
+   306000:  128:    const int cmp = inverse_cmp(&a.magnitude, &b.magnitude);
+call    0 returned 306000
+   306000:  129:    memset(out, 0, sizeof(*out));
+   306000:  130:    if (cmp >= 0) {
+branch  0 taken 230000 (fallthrough)
+branch  1 taken 76000
+   230000:  131:        inverse_sub_raw(&out->magnitude, &a.magnitude, &b.magnitude);
+call    0 returned 230000
+   230000:  132:        out->negative = a.negative;
+        -:  133:    } else {
+    76000:  134:        inverse_sub_raw(&out->magnitude, &b.magnitude, &a.magnitude);
+call    0 returned 76000
+    76000:  135:        out->negative = !a.negative;
+        -:  136:    }
+   306000:  137:    inverse_signed_normalize(out);
+call    0 returned 306000
+        -:  138:}
+        -:  139:
+        -:  140:/** @brief Adds signed values using the existing signed subtraction primitive. */
+function inverse_signed_add called 258000 returned 100% blocks executed 100%
+   258000:  141:static void inverse_signed_add(inverse_signed_t *out, const inverse_signed_t *left,
+        -:  142:                               const inverse_signed_t *right)
+        -:  143:{
+   258000:  144:    inverse_signed_t neg = *right;
+   258000:  145:    neg.negative = !neg.negative;
+   258000:  146:    inverse_signed_sub(out, left, &neg);
+call    0 returned 258000
+   258000:  147:}
+        -:  148:
+        -:  149:/** @brief Halves both Bezout coefficients while preserving u = a*x + m*y. */
+function inverse_pair_half called 466000 returned 100% blocks executed 96%
+   466000:  150:static int inverse_pair_half(inverse_signed_t *x, inverse_signed_t *y,
+        -:  151:                             const bignum_t *a, const bignum_t *m)
+        -:  152:{
+   466000:  153:    if (inverse_even(&x->magnitude) && inverse_even(&y->magnitude)) {
+call    0 returned 466000
+branch  1 taken 208000 (fallthrough)
+branch  2 taken 258000
+call    3 returned 208000
+branch  4 taken 208000 (fallthrough)
+branch  5 taken 0
+   208000:  154:        inverse_half(&x->magnitude); inverse_half(&y->magnitude);
+call    0 returned 208000
+call    1 returned 208000
+   208000:  155:        inverse_signed_normalize(x); inverse_signed_normalize(y);
+call    0 returned 208000
+call    1 returned 208000
+   208000:  156:        return 1;
+        -:  157:    }
+        -:  158:    inverse_signed_t sm, sa, nx, ny;
+   258000:  159:    memset(&sm, 0, sizeof(sm)); sm.magnitude = *m;
+   258000:  160:    memset(&sa, 0, sizeof(sa)); sa.magnitude = *a;
+   258000:  161:    inverse_signed_add(&nx, x, &sm);
+call    0 returned 258000
+   258000:  162:    inverse_signed_sub(&ny, y, &sa);
+call    0 returned 258000
+  258000*:  163:    if (!inverse_even(&nx.magnitude) || !inverse_even(&ny.magnitude)) return 0;
+call    0 returned 258000
+branch  1 taken 258000 (fallthrough)
+branch  2 taken 0
+call    3 returned 258000
+branch  4 taken 0 (fallthrough)
+branch  5 taken 258000
+   258000:  164:    inverse_half(&nx.magnitude); inverse_half(&ny.magnitude);
+call    0 returned 258000
+call    1 returned 258000
+   258000:  165:    inverse_signed_normalize(&nx); inverse_signed_normalize(&ny);
+call    0 returned 258000
+call    1 returned 258000
+   258000:  166:    *x = nx; *y = ny;
+   258000:  167:    return 1;
+        -:  168:}
+        -:  169:
+        -:  170:/** @brief Reduces input modulo modulus using MSB-first binary division. */
+function inverse_reduce called 32000 returned 100% blocks executed 88%
+    32000:  171:static void inverse_reduce(bignum_t *out, const bignum_t *input, const bignum_t *modulus)
+        -:  172:{
+        -:  173:    bignum_t remainder;
+    32000:  174:    memset(&remainder, 0, sizeof(remainder));
+    64000:  175:    for (size_t word = input->len; word != 0U; --word) {
+branch  0 taken 32000
+branch  1 taken 32000 (fallthrough)
+  2080000:  176:        for (unsigned bit = 64U; bit != 0U; --bit) {
+branch  0 taken 2048000
+branch  1 taken 32000 (fallthrough)
+  2048000:  177:            uint64_t carry = (input->words[word - 1U] >> (bit - 1U)) & 1U;
+ 67584000:  178:            for (size_t i = 0U; i < BIGNUM_CAPACITY; ++i) {
+branch  0 taken 65536000
+branch  1 taken 2048000 (fallthrough)
+ 65536000:  179:                const uint64_t old = remainder.words[i];
+ 65536000:  180:                remainder.words[i] = (old << 1U) | carry;
+ 65536000:  181:                carry = old >> 63U;
+        -:  182:            }
+  2048000:  183:            remainder.len = BIGNUM_CAPACITY;
+  2048000:  184:            inverse_normalize(&remainder);
+call    0 returned 2048000
+  2048000:  185:            if (carry != 0U || inverse_cmp(&remainder, modulus) >= 0) {
+branch  0 taken 2048000 (fallthrough)
+branch  1 taken 0
+call    2 returned 2048000
+branch  3 taken 0 (fallthrough)
+branch  4 taken 2048000
+        -:  186:                bignum_t difference;
+    #####:  187:                inverse_sub_raw(&difference, &remainder, modulus);
+call    0 never executed
+    #####:  188:                remainder = difference;
+        -:  189:            }
+        -:  190:        }
+        -:  191:    }
+    32000:  192:    *out = remainder;
+    32000:  193:}
+        -:  194:
+        -:  195:/**
+        -:  196: * @brief Computes the modular inverse using signed binary extended Euclid.
+        -:  197: * @details The public parameter ownership and status contract are declared in
+        -:  198: * the header; this definition implements the same ABI without heap allocation.
+        -:  199: * @return Named bignum_inverse_status_t result code.
+        -:  200: */
+function bignum_inverse called 16000 returned 100% blocks executed 83%
+    16000:  201:bignum_inverse_status_t bignum_inverse(bignum_t *result, const bignum_t *a,
+        -:  202:                                       const bignum_t *modulus)
+        -:  203:{
+        -:  204:    bignum_t u, v, m, one, output;
+        -:  205:    inverse_signed_t coefficient_u, coefficient_v, coefficient_uy, coefficient_vy;
+   16000*:  206:    if (result == NULL || a == NULL || modulus == NULL) return BIGNUM_INVERSE_ERROR_NULL_ARG;
+branch  0 taken 16000 (fallthrough)
+branch  1 taken 0
+branch  2 taken 16000 (fallthrough)
+branch  3 taken 0
+branch  4 taken 0 (fallthrough)
+branch  5 taken 16000
+   16000*:  207:    if (inverse_overlap(result, a) || inverse_overlap(result, modulus)) return BIGNUM_INVERSE_ERROR_OVERLAP;
+call    0 returned 16000
+branch  1 taken 16000 (fallthrough)
+branch  2 taken 0
+call    3 returned 16000
+branch  4 taken 0 (fallthrough)
+branch  5 taken 16000
+   16000*:  208:    if (a->len > BIGNUM_CAPACITY || modulus->len > BIGNUM_CAPACITY) return BIGNUM_INVERSE_ERROR_BAD_LENGTH;
+branch  0 taken 16000 (fallthrough)
+branch  1 taken 0
+branch  2 taken 0 (fallthrough)
+branch  3 taken 16000
+    16000:  209:    u = *a; v = *modulus; inverse_normalize(&u); inverse_normalize(&v); m = v;
+call    0 returned 16000
+call    1 returned 16000
+   16000*:  210:    if (v.len == 0U) return BIGNUM_INVERSE_ERROR_MODULUS_ZERO;
+branch  0 taken 0 (fallthrough)
+branch  1 taken 16000
+    16000:  211:    memset(&one, 0, sizeof(one)); one.len = 1U; one.words[0] = 1U;
+   16000*:  212:    if (inverse_cmp(&v, &one) <= 0) return BIGNUM_INVERSE_ERROR_NO_INVERSE;
+call    0 returned 16000
+branch  1 taken 0 (fallthrough)
+branch  2 taken 16000
+    16000:  213:    inverse_reduce(&u, &u, &m);
+call    0 returned 16000
+   16000*:  214:    if (u.len == 0U) return BIGNUM_INVERSE_ERROR_NO_INVERSE;
+branch  0 taken 0 (fallthrough)
+branch  1 taken 16000
+    16000:  215:    bignum_t base = u;
+    16000:  216:    memset(&coefficient_u, 0, sizeof(coefficient_u));
+    16000:  217:    coefficient_u.magnitude.len = 1U; coefficient_u.magnitude.words[0] = 1U;
+    16000:  218:    memset(&coefficient_v, 0, sizeof(coefficient_v));
+    16000:  219:    memset(&coefficient_uy, 0, sizeof(coefficient_uy));
+    16000:  220:    memset(&coefficient_vy, 0, sizeof(coefficient_vy));
+    16000:  221:    coefficient_vy.magnitude.len = 1U; coefficient_vy.magnitude.words[0] = 1U;
+   260000:  222:    while (u.len != 0U && v.len != 0U && inverse_cmp(&u, &one) != 0 && inverse_cmp(&v, &one) != 0) {
+branch  0 taken 260000 (fallthrough)
+branch  1 taken 0
+branch  2 taken 260000 (fallthrough)
+branch  3 taken 0
+call    4 returned 260000
+branch  5 taken 256000 (fallthrough)
+branch  6 taken 4000
+call    7 returned 256000
+branch  8 taken 244000
+branch  9 taken 12000 (fallthrough)
+   254000:  223:        while (inverse_even(&u)) {
+call    0 returned 254000
+branch  1 taken 10000
+branch  2 taken 244000 (fallthrough)
+    10000:  224:            inverse_half(&u);
+call    0 returned 10000
+   10000*:  225:            if (!inverse_pair_half(&coefficient_u, &coefficient_uy, &base, &m)) goto no_inverse;
+call    0 returned 10000
+branch  1 taken 0 (fallthrough)
+branch  2 taken 10000
+        -:  226:        }
+   700000:  227:        while (inverse_even(&v)) {
+call    0 returned 700000
+branch  1 taken 456000
+branch  2 taken 244000 (fallthrough)
+   456000:  228:            inverse_half(&v);
+call    0 returned 456000
+  456000*:  229:            if (!inverse_pair_half(&coefficient_v, &coefficient_vy, &base, &m)) goto no_inverse;
+call    0 returned 456000
+branch  1 taken 0 (fallthrough)
+branch  2 taken 456000
+        -:  230:        }
+   244000:  231:        if (inverse_cmp(&u, &v) >= 0) {
+call    0 returned 244000
+branch  1 taken 18000 (fallthrough)
+branch  2 taken 226000
+        -:  232:            bignum_t difference;
+    18000:  233:            inverse_sub_raw(&difference, &u, &v); u = difference;
+call    0 returned 18000
+        -:  234:            inverse_signed_t next;
+    18000:  235:            inverse_signed_sub(&next, &coefficient_u, &coefficient_v);
+call    0 returned 18000
+    18000:  236:            coefficient_u = next;
+    18000:  237:            inverse_signed_sub(&next, &coefficient_uy, &coefficient_vy);
+call    0 returned 18000
+    18000:  238:            coefficient_uy = next;
+        -:  239:        } else {
+        -:  240:            bignum_t difference;
+   226000:  241:            inverse_sub_raw(&difference, &v, &u); v = difference;
+call    0 returned 226000
+        -:  242:            inverse_signed_t next;
+   226000:  243:            inverse_signed_sub(&next, &coefficient_v, &coefficient_u);
+call    0 returned 226000
+   226000:  244:            coefficient_v = next;
+   226000:  245:            inverse_signed_sub(&next, &coefficient_vy, &coefficient_uy);
+call    0 returned 226000
+   226000:  246:            coefficient_vy = next;
+        -:  247:        }
+        -:  248:    }
+    16000:  249:    inverse_signed_t *winner = NULL;
+    16000:  250:    if (inverse_cmp(&u, &one) == 0) winner = &coefficient_u;
+call    0 returned 16000
+branch  1 taken 4000 (fallthrough)
+branch  2 taken 12000
+    12000:  251:    else if (inverse_cmp(&v, &one) == 0) winner = &coefficient_v;
+call    0 returned 12000
+branch  1 taken 12000 (fallthrough)
+branch  2 taken 0
+    #####:  252:    else goto no_inverse;
+        -:  253:    bignum_t reduced_coefficient;
+    16000:  254:    inverse_reduce(&reduced_coefficient, &winner->magnitude, &m);
+call    0 returned 16000
+   16000*:  255:    if (winner->negative && reduced_coefficient.len != 0U)
+branch  0 taken 0 (fallthrough)
+branch  1 taken 16000
+branch  2 never executed (fallthrough)
+branch  3 never executed
+    #####:  256:        inverse_sub_raw(&output, &m, &reduced_coefficient);
+call    0 never executed
+    16000:  257:    else output = reduced_coefficient;
+    16000:  258:    inverse_normalize(&output);
+call    0 returned 16000
+   16000*:  259:    if (inverse_cmp(&output, &m) >= 0) return BIGNUM_INVERSE_ERROR_INTERNAL;
+call    0 returned 16000
+branch  1 taken 0 (fallthrough)
+branch  2 taken 16000
+    16000:  260:    *result = output;
+    16000:  261:    return BIGNUM_INVERSE_SUCCESS;
+    #####:  262:no_inverse:
+    #####:  263:    return BIGNUM_INVERSE_ERROR_NO_INVERSE;
+        -:  264:}
