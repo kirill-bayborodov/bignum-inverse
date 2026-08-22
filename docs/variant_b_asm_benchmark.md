@@ -124,3 +124,11 @@ The fourth targeted path handles arbitrary odd 2–32-word moduli for `a=5`. Bec
 | 32 | 236,227.935 | 655.821 | 0.003x | identical |
 
 The full release suite passed with `0 / 5 failed`. Valid odd moduli of lengths 2–32 passed targeted AddressSanitizer execution with leak detection. The benchmark checksums match the C11 reference at every size.
+
+## Generic scalar-divisor kernel
+
+The previously duplicated a=3, a=5 and a=7 paths were consolidated behind one runtime-parameterized kernel for odd scalar `a` in the range 3..15 and multiword odd moduli of 2–32 words. The kernel computes `2^64 mod a`, scans the modulus from most-significant to least-significant word, finds the small multiplier `t` satisfying `t*(m mod a)+1 == 0 (mod a)`, and performs the quotient using register-resident multiply/divide loops. The dedicated a=2 `(m+1)/2` path and the generated Variant B fallback remain available.
+
+A 224-case differential harness compared ASM and C11 across divisors 3, 5, 7, 9, 11, 13 and 15, lengths 2–32 and four odd modulus patterns. Status, result length and digest matched for every case. The same harness passed under AddressSanitizer with leak detection. The full release suite remained `0 / 5 failed`.
+
+The scalar benchmark used 500 calls per point. ASM latency ranged from approximately 65–447 ns/call across the valid cases, while C11 ranged from approximately 16–266 microseconds/call; checksums and NO_INVERSE cases matched. For `a=7`, lengths divisible by the modulus-specific pattern correctly returned NO_INVERSE in both implementations and were not included as successful latency points.

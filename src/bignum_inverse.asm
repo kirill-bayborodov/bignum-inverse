@@ -2007,6 +2007,120 @@ bignum_inverse:
     cmp rax, 264
     jb .Lgeneric_entry
 .Lcheck_lengths:
+    ; Generic small odd scalar-divisor path, d in [3,15].
+    ; It computes t with t*(m mod d)+1 == 0 (mod d), then x=(t*m+1)/d.
+    cmp qword [rsi+256], 1
+    jne .Llegacy_scalar_specializations
+    mov r11, [rsi]
+    cmp r11, 3
+    jb .Llegacy_scalar_specializations
+    test r11b, 1
+    jz .Llegacy_scalar_specializations
+    cmp r11, 15
+    ja .Llegacy_scalar_specializations
+    mov r10, [rdx+256]
+    cmp r10, 2
+    jb .Llegacy_scalar_specializations
+    cmp r10, 32
+    ja .Lgeneric_entry
+    push r12
+    push r13
+    push r14
+    push r15
+    mov r12, r11
+    mov r13, rdx
+    mov r14, rdi
+    ; Compute B = 2^64 mod d with a bounded 64-step doubling loop.
+    mov r8, 1
+    mov r15, 64
+.Lscalar_bmod:
+    add r8, r8
+    cmp r8, r12
+    jb .Lscalar_bmod_no_sub
+    sub r8, r12
+.Lscalar_bmod_no_sub:
+    dec r15
+    jnz .Lscalar_bmod
+    ; Scan the modulus in base 2^64 to obtain m mod d.
+    xor r9d, r9d
+    mov r15, r10
+    dec r15
+.Lscalar_mod_scan:
+    mov rax, [r13+r15*8]
+    xor edx, edx
+    div r12
+    mov r11, rdx
+    mov rax, r9
+    imul rax, r8
+    add rax, r11
+    xor edx, edx
+    div r12
+    mov r9, rdx
+    dec r15
+    jns .Lscalar_mod_scan
+    ; Find the small Bezout multiplier t without wide arithmetic.
+    xor r11d, r11d
+    inc r11
+.Lscalar_find_t:
+    mov rax, r11
+    imul rax, r9
+    inc rax
+    xor edx, edx
+    div r12
+    test rdx, rdx
+    jz .Lscalar_have_t
+    inc r11
+    cmp r11, r12
+    jb .Lscalar_find_t
+    jmp .Lscalar_no_inverse
+.Lscalar_have_t:
+    xor r15d, r15d
+    xor ecx, ecx
+.Lscalar_mul_loop:
+    mov rax, [r13+r15*8]
+    mul r11
+    add rax, rcx
+    adc rdx, 0
+    test r15, r15
+    jnz .Lscalar_store
+    add rax, 1
+    adc rdx, 0
+.Lscalar_store:
+    mov [r14+r15*8], rax
+    mov rcx, rdx
+    inc r15
+    cmp r15, r10
+    jb .Lscalar_mul_loop
+    mov r15, r10
+    dec r15
+    mov rdx, rcx
+.Lscalar_div_loop:
+    mov rax, [r14+r15*8]
+    div r12
+    mov [r14+r15*8], rax
+    dec r15
+    jns .Lscalar_div_loop
+    mov [r14+256], r10
+    lea rdi, [r14+r10*8]
+    mov rcx, 32
+    sub rcx, r10
+    xor eax, eax
+    rep stosq
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    xor eax, eax
+    ret
+.Lscalar_no_inverse:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    mov eax, -5
+    ret
+.Llegacy_scalar_specializations:
+    ; Legacy targeted paths remain below as a conservative fallback.
     ; Multiword scalar-a specialization for a=5: x=(t*m+1)/5.
     ; Since 2^64 mod 5 is one, the remainder scan is rem+word mod 5.
     cmp qword [rsi+256], 1
