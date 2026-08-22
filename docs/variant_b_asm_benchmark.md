@@ -140,3 +140,20 @@ The duplicated scalar paths were replaced by one runtime-parameterized kernel fo
 The exhaustive C11 differential harness covered 224 cases across `d={3,5,7,9,11,13,15}`, lengths 2–32 and four odd modulus patterns. Status, result length and digest matched in every case. The same 224 cases passed under AddressSanitizer with leak detection. The release suite remained `0 / 5 failed`.
 
 The first candidate exposed an incorrect low-to-high modulus scan; this was corrected before acceptance. The accepted candidate is therefore the one represented by the differential PASS, not the initial failed attempt.
+
+## General multiword EEA hot-path step — identity operand
+
+As the first safe step toward the general multiword EEA kernel, the dispatcher now recognizes normalized `a=1` for any valid modulus greater than one. The mathematical result is exactly one, so the path publishes a canonical one-word result and clears the remaining capacity without entering the 4.9 KiB generated generic stack frame. Invalid, zero and modulus-one cases still fall through to the established validation path.
+
+A dedicated test covered every modulus length 1–32 under AddressSanitizer with leak detection; all outputs were canonical and the full release suite remained `0 / 5 failed`.
+
+| Modulus words | C11 ns/call | ASM identity path ns/call | Checksums |
+|---:|---:|---:|---|
+| 1 | 2,576.647 | 42.778 | identical |
+| 2 | 2,542.392 | 42.583 | identical |
+| 4 | 2,606.786 | 42.560 | identical |
+| 8 | 2,589.006 | 69.290 | identical |
+| 16 | 2,705.012 | 44.707 | identical |
+| 32 | 2,748.193 | 44.813 | identical |
+
+This is a safe dispatch optimization, not yet a general EEA arithmetic replacement. Arbitrary multiword `a` continues through the generated Variant B kernel until a subsequent compare/subtract/halve step is proven independently.

@@ -2007,6 +2007,32 @@ bignum_inverse:
     cmp rax, 264
     jb .Lgeneric_entry
 .Lcheck_lengths:
+    ; Multiword identity fast path: 1^{-1} mod m = 1 for m > 1.
+    cmp qword [rsi+256], 1
+    jne .Lscalar_divisor_entry
+    cmp qword [rsi], 1
+    jne .Lscalar_divisor_entry
+    mov r10, [rdx+256]
+    cmp r10, 1
+    jb .Lgeneric_entry
+    cmp r10, 32
+    ja .Lgeneric_entry
+    cmp r10, 1
+    jne .Lidentity_multiword
+    cmp qword [rdx], 2
+    jb .Lgeneric_entry
+.Lidentity_multiword:
+    cmp qword [rdx+r10*8-8], 0
+    je .Lgeneric_entry
+    mov qword [rdi], 1
+    mov qword [rdi+256], 1
+    lea rdi, [rdi+8]
+    mov rcx, 31
+    xor eax, eax
+    rep stosq
+    xor eax, eax
+    ret
+.Lscalar_divisor_entry:
     ; Generic small odd scalar-divisor path, d in [3,15].
     ; It computes t with t*(m mod d)+1 == 0 (mod d), then x=(t*m+1)/d.
     cmp qword [rsi+256], 1
