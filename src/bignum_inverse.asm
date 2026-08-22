@@ -1,7 +1,7 @@
 ; @file bignum_inverse.asm
-; @brief Optimized x86-64 YASM implementation generated from the C11 reference algorithm.
-; @version 1.0.0
-; @details SysV AMD64 ABI; no global mutable state; transactional output contract.
+; @brief Optimized x86-64 YASM implementation of modular multiplicative inverse.
+; @version 1.1.0
+; @details SysV AMD64 ABI: rdi=result, rsi=a, rdx=modulus; caller-saved rax/rcx/r8-r11 may be clobbered; callee-saved registers are preserved. The destination is written only on SUCCESS, and all records use bignum_t {words[32], len} with 64-bit little-endian words.
 BITS 64
 default rel
 section .text
@@ -24,23 +24,24 @@ inverse_sub_raw:
 	xor	esi, esi
 	mov	r11, rax
 	xor	eax, eax
-.L4:
+.L7:
 	mov	rcx, QWORD [r9+rax*8]
 	mov	rdi, QWORD [r10+rax*8]
 	test	rsi, rsi
-	jne	.L7
+	je	.L4
 	xor	esi, esi
-	cmp	rcx, rdi
-	setb	sil
+	cmp	rdi, rcx
+	setnb	sil
+	sub	rcx, 1
 .L31:
 	sub	rcx, rdi
 	mov	QWORD [r8+rax*8], rcx
 	add	rax, 1
 	cmp	rax, r11
-	jb	.L4
+	jb	.L7
 	cmp	rax, rdx
-	jnb	.L6
-.L5:
+	jnb	.L9
+.L8:
 	mov	rcx, QWORD [r9+rax*8]
 	test	rsi, rsi
 	je	.L12
@@ -51,18 +52,18 @@ inverse_sub_raw:
 	mov	QWORD [r8+rax*8], rcx
 	add	rax, 1
 	cmp	rax, rdx
-	jb	.L5
+	jb	.L8
 	test	rdx, rdx
-	jne	.L35
+	jne	.L34
 .L2:
 	xor	edx, edx
 	jmp	.L14
 .L16:
 	mov	rdx, rax
-.L6:
+.L9:
 	test	rdx, rdx
 	je	.L2
-.L35:
+.L34:
 	cmp	QWORD [r8-8+rdx*8], 0
 	lea	rax, [rdx-1]
 	je	.L16
@@ -83,22 +84,21 @@ inverse_sub_raw:
 .L15:
 	mov	QWORD [r8+256], rdx
 	ret
-.L36:
+.L35:
 	mov	rcx, QWORD [r9+rax*8]
 .L12:
 	mov	QWORD [r8+rax*8], rcx
 	add	rax, 1
 	cmp	rax, rdx
-	jb	.L36
-	jmp	.L6
+	jb	.L35
+	jmp	.L9
 .L3:
 	mov	rcx, QWORD [rsi]
 	jmp	.L12
-.L7:
+.L4:
 	xor	esi, esi
-	cmp	rdi, rcx
-	setnb	sil
-	sub	rcx, 1
+	cmp	rcx, rdi
+	setb	sil
 	jmp	.L31
 inverse_signed_sub:
 	push	r13
@@ -120,14 +120,14 @@ inverse_signed_sub:
 	mov	ecx, 34
 	rep movsq
 	cmp	ebp, DWORD [rsp+808]
-	jne	.L83
+	jne	.L82
 	mov	rax, QWORD [rsp+528]
 	mov	rdx, QWORD [rsp+800]
 	cmp	rax, rdx
-	je	.L63
+	je	.L62
 	cmp	rdx, rax
-	jnb	.L66
-.L64:
+	jnb	.L65
+.L63:
 	mov	ecx, 34
 	xor	eax, eax
 	mov	rdi, rbx
@@ -136,45 +136,45 @@ inverse_signed_sub:
 	mov	rsi, r10
 	mov	rdi, rbx
 	call	inverse_sub_raw
-.L65:
+.L64:
 	mov	rdx, QWORD [rbx+256]
 	mov	eax, 32
 	mov	DWORD [rbx+264], ebp
 	cmp	rdx, rax
 	cmova	rdx, rax
-	jmp	.L69
-.L85:
+	jmp	.L68
+.L84:
 	cmp	QWORD [rbx-8+rdx*8], 0
 	lea	rax, [rdx-1]
-	jne	.L84
+	jne	.L83
 	mov	rdx, rax
-.L69:
+.L68:
 	test	rdx, rdx
-	jne	.L85
+	jne	.L84
 	mov	ecx, 32
 	mov	rdi, rbx
 	mov	rax, rdx
 	rep stosq
 	mov	QWORD [rbx+256], 0
 	mov	DWORD [rbx+264], 0
-.L37:
+.L36:
 	add	rsp, 824
 	pop	rbx
 	pop	rbp
 	pop	r12
 	pop	r13
 	ret
-.L67:
+.L66:
 	sub	rax, 1
 	mov	rdx, QWORD [r10+rax*8]
 	mov	rcx, QWORD [r9+rax*8]
 	cmp	rdx, rcx
-	jne	.L86
-.L63:
+	jne	.L85
+.L62:
 	test	rax, rax
-	jne	.L67
-	jmp	.L64
-.L83:
+	jne	.L66
+	jmp	.L63
+.L82:
 	mov	r11, QWORD [rsp+800]
 	mov	r12, QWORD [rsp+528]
 	mov	rsi, rsp
@@ -186,23 +186,23 @@ inverse_signed_sub:
 	cmovnb	r8, r11
 	lea	rdi, [rsi+r8*8]
 	test	r8, r8
-	je	.L39
+	je	.L38
 	xor	edx, edx
 	test	r12, r12
-	jne	.L50
+	jne	.L49
 	xor	eax, eax
-.L56:
+.L55:
 	cmp	rax, r11
-	jnb	.L51
-.L89:
+	jnb	.L50
+.L88:
 	add	rdx, QWORD [r9+rax*8]
 	mov	QWORD [rsi+rax*8], rdx
 	setc	dl
 	add	rax, 1
 	movzx	edx, dl
 	cmp	rax, r8
-	jb	.L56
-.L55:
+	jb	.L55
+.L54:
 	mov	QWORD [rdi], rdx
 	mov	ecx, 34
 	xor	eax, eax
@@ -210,7 +210,7 @@ inverse_signed_sub:
 	rep stosq
 	add	r8, rdx
 	cmp	r8, 32
-	ja	.L37
+	ja	.L36
 	lea	rax, [0+r8*8]
 	mov	rdi, rbx
 	mov	edx, eax
@@ -221,17 +221,17 @@ inverse_signed_sub:
 	shr	eax, 3
 	mov	ecx, eax
 	rep movsq
-.L71:
+.L70:
 	mov	DWORD [rbx+264], ebp
-	jmp	.L60
-.L88:
+	jmp	.L59
+.L87:
 	cmp	QWORD [rbx-8+r8*8], 0
 	lea	rax, [r8-1]
-	jne	.L87
+	jne	.L86
 	mov	r8, rax
-.L60:
+.L59:
 	test	r8, r8
-	jne	.L88
+	jne	.L87
 	mov	rdi, rbx
 	mov	ecx, 32
 	mov	rax, r8
@@ -244,18 +244,18 @@ inverse_signed_sub:
 	pop	r12
 	pop	r13
 	ret
-.L41:
+.L40:
 	add	rcx, rdx
 	setc	dl
 	mov	QWORD [rsi+rax*8], rcx
 	add	rax, 1
 	movzx	edx, dl
 	cmp	rax, r12
-	jnb	.L47
-.L50:
+	jnb	.L46
+.L49:
 	mov	rcx, QWORD [r10+rax*8]
 	cmp	rax, r11
-	jnb	.L41
+	jnb	.L40
 	xor	r13d, r13d
 	add	rcx, QWORD [r9+rax*8]
 	setc	r13b
@@ -266,22 +266,22 @@ inverse_signed_sub:
 	movzx	edx, dl
 	or	rdx, r13
 	cmp	rax, r12
-	jb	.L50
-.L47:
+	jb	.L49
+.L46:
 	cmp	rax, r8
-	jnb	.L55
+	jnb	.L54
 	cmp	rax, r11
-	jb	.L89
-.L51:
+	jb	.L88
+.L50:
 	mov	QWORD [rsi+rax*8], rdx
 	add	rax, 1
 	xor	edx, edx
 	cmp	rax, r8
-	jb	.L56
-	jmp	.L55
-.L84:
+	jb	.L55
+	jmp	.L54
+.L83:
 	cmp	rdx, 32
-	je	.L81
+	je	.L80
 	mov	eax, 32
 	lea	rsi, [rbx+rdx*8]
 	sub	rax, rdx
@@ -302,10 +302,10 @@ inverse_signed_sub:
 	pop	r12
 	pop	r13
 	ret
-.L86:
+.L85:
 	cmp	rcx, rdx
-	jb	.L64
-.L66:
+	jb	.L63
+.L65:
 	xor	eax, eax
 	mov	ecx, 34
 	mov	rdi, rbx
@@ -317,13 +317,13 @@ inverse_signed_sub:
 	test	ebp, ebp
 	sete	bpl
 	movzx	ebp, bpl
-	jmp	.L65
-.L81:
+	jmp	.L64
+.L80:
 	mov	QWORD [rbx+256], 32
-	jmp	.L37
-.L87:
+	jmp	.L36
+.L86:
 	cmp	r8, 32
-	je	.L81
+	je	.L80
 	mov	eax, 32
 	lea	rdx, [rbx+r8*8]
 	sub	rax, r8
@@ -338,14 +338,14 @@ inverse_signed_sub:
 	xor	eax, eax
 	rep stosq
 	mov	QWORD [rbx+256], r8
-	jmp	.L37
-.L39:
+	jmp	.L36
+.L38:
 	mov	QWORD [rdi], 0
 	mov	ecx, 34
 	mov	rdi, rbx
 	mov	rax, r8
 	rep stosq
-	jmp	.L71
+	jmp	.L70
 inverse_reduce:
 	push	r15
 	xor	eax, eax
@@ -364,10 +364,11 @@ inverse_reduce:
 	mov	QWORD [rsp+24], rsi
 	rep stosq
 	mov	rax, QWORD [rsi+256]
+	xor	edi, edi
 	mov	QWORD [rsp+8], rax
 	test	rax, rax
-	je	.L92
-.L91:
+	je	.L91
+.L90:
 	sub	QWORD [rsp+8], 1
 	mov	rbx, QWORD [rsp+24]
 	mov	r12d, 64
@@ -380,47 +381,50 @@ inverse_reduce:
 	mov	ecx, r12d
 	shr	rsi, cl
 	and	esi, 1
+	jmp	.L93
+.L122:
+	mov	rdi, QWORD [rax]
 .L93:
-	mov	rcx, QWORD [rax]
+	lea	rdx, [rdi+rdi]
 	add	rax, 8
-	lea	rdx, [rcx+rcx]
 	or	rdx, rsi
-	mov	rsi, rcx
+	mov	rsi, rdi
 	mov	QWORD [rax-8], rdx
 	shr	rsi, 63
 	cmp	r14, rax
-	jne	.L93
+	jne	.L122
 	mov	edx, 32
-.L94:
+.L92:
 	mov	rax, rdx
 	sub	rdx, 1
 	cmp	QWORD [r15+rdx*8], 0
-	jne	.L122
+	jne	.L123
 	test	rdx, rdx
-	jne	.L94
-.L95:
+	jne	.L92
+.L94:
 	mov	eax, 32
 	lea	r10, [r15+rdx*8]
 	sub	rax, rdx
 	mov	rdi, r10
 	sal	rax, 3
 	mov	ecx, eax
-	sub	eax, 1
 	mov	QWORD [r10-8+rcx], 0
+	lea	ecx, [rax-1]
+	mov	eax, ecx
 	shr	eax, 3
 	mov	ecx, eax
 	xor	eax, eax
 	rep stosq
-.L100:
+.L99:
 	mov	QWORD [rsp+288], rdx
 	test	rsi, rsi
-	jne	.L98
+	jne	.L97
 	mov	rax, QWORD [r13+256]
-	cmp	rdx, rax
-	je	.L101
 	cmp	rax, rdx
-	jnb	.L102
-.L98:
+	je	.L100
+.L121:
+	jnb	.L101
+.L97:
 	lea	rbp, [rsp+304]
 	mov	rsi, r15
 	mov	rdx, r13
@@ -430,12 +434,35 @@ inverse_reduce:
 	mov	rdi, r15
 	mov	rsi, rbp
 	rep movsq
-.L102:
+.L101:
 	test	r12d, r12d
-	jne	.L104
+	je	.L124
+	mov	rdi, QWORD [rsp+32]
+	jmp	.L104
+.L102:
+	sub	rax, 1
+	mov	rdx, QWORD [r15+rax*8]
+	mov	rcx, QWORD [r13+0+rax*8]
+	cmp	rdx, rcx
+	jne	.L125
+.L100:
+	test	rax, rax
+	jne	.L102
+	jmp	.L97
+.L123:
+	mov	rdx, rax
+	cmp	rax, 32
+	jne	.L94
+	jmp	.L99
+.L125:
+	cmp	rcx, rdx
+	jmp	.L121
+.L124:
 	cmp	QWORD [rsp+8], 0
-	jne	.L91
-.L92:
+	je	.L91
+	mov	rdi, QWORD [rsp+32]
+	jmp	.L90
+.L91:
 	mov	rdi, QWORD [rsp+16]
 	mov	rsi, r15
 	mov	ecx, 33
@@ -448,22 +475,6 @@ inverse_reduce:
 	pop	r14
 	pop	r15
 	ret
-.L101:
-	test	rax, rax
-	je	.L98
-	sub	rax, 1
-	mov	rdx, QWORD [r15+rax*8]
-	mov	rcx, QWORD [r13+0+rax*8]
-	cmp	rdx, rcx
-	je	.L101
-	cmp	rcx, rdx
-	jb	.L98
-	jmp	.L102
-.L122:
-	mov	rdx, rax
-	cmp	rax, 32
-	jne	.L95
-	jmp	.L100
 inverse_pair_half:
 	push	r14
 	mov	r8, rdx
@@ -477,23 +488,23 @@ inverse_pair_half:
 	sub	rsp, 1088
 	mov	rdx, QWORD [rdi+256]
 	test	rdx, rdx
-	jne	.L124
+	jne	.L127
 	cmp	QWORD [rbx+256], 0
-	jne	.L125
-.L130:
+	jne	.L128
+.L133:
 	mov	eax, 32
 	cmp	rdx, rax
 	cmova	rdx, rax
-	jmp	.L126
-.L214:
+	jmp	.L129
+.L217:
 	cmp	QWORD [rbp-8+rdx*8], 0
 	lea	rax, [rdx-1]
-	jne	.L213
+	jne	.L216
 	mov	rdx, rax
-.L126:
+.L129:
 	test	rdx, rdx
-	jne	.L214
-.L131:
+	jne	.L217
+.L134:
 	mov	ecx, 32
 	lea	rsi, [rbp+0+rdx*8]
 	sub	rcx, rdx
@@ -505,14 +516,14 @@ inverse_pair_half:
 	shr	ecx, 3
 	xor	eax, eax
 	rep stosq
-.L135:
+.L138:
 	mov	QWORD [rbp+256], rdx
 	mov	rdx, QWORD [rbx+256]
 	test	rdx, rdx
-	je	.L134
+	je	.L137
 	lea	rcx, [rbx-8+rdx*8]
 	xor	eax, eax
-.L137:
+.L140:
 	mov	rsi, QWORD [rcx]
 	mov	rdi, rcx
 	sub	rcx, 8
@@ -521,21 +532,21 @@ inverse_pair_half:
 	mov	rax, rsi
 	and	eax, 1
 	cmp	rbx, rdi
-	jne	.L137
-.L134:
+	jne	.L140
+.L137:
 	mov	eax, 32
 	cmp	rdx, rax
 	cmova	rdx, rax
-	jmp	.L136
-.L216:
+	jmp	.L139
+.L219:
 	cmp	QWORD [rbx-8+rdx*8], 0
 	lea	rax, [rdx-1]
-	jne	.L215
+	jne	.L218
 	mov	rdx, rax
-.L136:
+.L139:
 	test	rdx, rdx
-	jne	.L216
-.L138:
+	jne	.L219
+.L141:
 	mov	ecx, 32
 	lea	rsi, [rbx+rdx*8]
 	sub	rcx, rdx
@@ -547,50 +558,50 @@ inverse_pair_half:
 	shr	ecx, 3
 	xor	eax, eax
 	rep stosq
-.L141:
+.L144:
 	mov	QWORD [rbx+256], rdx
 	mov	rdx, QWORD [rbp+256]
 	mov	eax, 32
 	cmp	rdx, rax
 	cmova	rdx, rax
-	jmp	.L140
-.L218:
+	jmp	.L143
+.L221:
 	cmp	QWORD [rbp-8+rdx*8], 0
 	lea	rax, [rdx-1]
-	jne	.L217
+	jne	.L220
 	mov	rdx, rax
-.L140:
+.L143:
 	test	rdx, rdx
-	jne	.L218
+	jne	.L221
 	mov	ecx, 32
 	mov	rdi, rbp
 	mov	rax, rdx
 	rep stosq
 	mov	QWORD [rbp+256], 0
 	mov	DWORD [rbp+264], 0
-.L172:
+.L175:
 	mov	rdx, QWORD [rbx+256]
 	mov	eax, 32
 	cmp	rdx, rax
 	cmova	rdx, rax
-	jmp	.L145
-.L220:
+	jmp	.L148
+.L223:
 	cmp	QWORD [rbx-8+rdx*8], 0
 	lea	rax, [rdx-1]
-	jne	.L219
+	jne	.L222
 	mov	rdx, rax
-.L145:
+.L148:
 	test	rdx, rdx
-	jne	.L220
+	jne	.L223
 	mov	ecx, 32
 	mov	rdi, rbx
 	mov	rax, rdx
 	rep stosq
 	mov	QWORD [rbx+256], 0
 	mov	DWORD [rbx+264], 0
-.L147:
+.L150:
 	mov	ecx, 1
-.L123:
+.L126:
 	add	rsp, 1088
 	mov	eax, ecx
 	pop	rbx
@@ -599,11 +610,11 @@ inverse_pair_half:
 	pop	r13
 	pop	r14
 	ret
-.L124:
+.L127:
 	mov	rax, QWORD [rdi]
 	and	eax, 1
-	je	.L221
-.L127:
+	je	.L224
+.L130:
 	mov	rdx, rsp
 	xor	eax, eax
 	mov	ecx, 34
@@ -637,25 +648,25 @@ inverse_pair_half:
 	call	inverse_signed_sub
 	mov	rdx, QWORD [rsp+800]
 	test	rdx, rdx
-	jne	.L148
+	jne	.L151
 	mov	rsi, QWORD [rsp+1072]
 	test	rsi, rsi
-	jne	.L222
+	jne	.L225
 	xor	r8d, r8d
-.L149:
+.L152:
 	mov	eax, 32
 	cmp	rdx, rax
 	cmova	rdx, rax
-	jmp	.L156
-.L224:
+	jmp	.L159
+.L227:
 	cmp	QWORD [r13-8+rdx*8], 0
 	lea	rax, [rdx-1]
-	jne	.L223
+	jne	.L226
 	mov	rdx, rax
-.L156:
+.L159:
 	test	rdx, rdx
-	jne	.L224
-.L155:
+	jne	.L227
+.L158:
 	mov	eax, 32
 	lea	r9, [r13+0+rdx*8]
 	sub	rax, rdx
@@ -669,12 +680,12 @@ inverse_pair_half:
 	mov	ecx, eax
 	xor	eax, eax
 	rep stosq
-.L160:
+.L163:
 	lea	rcx, [r12+rsi*8]
 	xor	eax, eax
 	test	rsi, rsi
-	je	.L161
-.L162:
+	je	.L164
+.L165:
 	mov	rsi, QWORD [rcx-8]
 	sub	rcx, 8
 	shld	rax, rsi, 63
@@ -682,18 +693,18 @@ inverse_pair_half:
 	mov	rax, rsi
 	and	eax, 1
 	cmp	r12, rcx
-	jne	.L162
+	jne	.L165
 	test	r8, r8
-	je	.L163
-.L226:
+	je	.L166
+.L229:
 	cmp	QWORD [r12-8+r8*8], 0
 	lea	rax, [r8-1]
-	jne	.L225
+	jne	.L228
 	mov	r8, rax
-.L161:
+.L164:
 	test	r8, r8
-	jne	.L226
-.L163:
+	jne	.L229
+.L166:
 	mov	eax, 32
 	lea	rsi, [r12+r8*8]
 	sub	rax, r8
@@ -707,37 +718,37 @@ inverse_pair_half:
 	mov	ecx, eax
 	xor	eax, eax
 	rep stosq
-	jmp	.L165
-.L228:
+	jmp	.L168
+.L231:
 	cmp	QWORD [r13-8+rdx*8], 0
 	lea	rax, [rdx-1]
-	jne	.L227
+	jne	.L230
 	mov	rdx, rax
-.L165:
+.L168:
 	test	rdx, rdx
-	jne	.L228
+	jne	.L231
 	mov	ecx, 32
 	mov	rdi, r13
 	mov	rax, rdx
 	mov	QWORD [rsp+800], 0
 	rep stosq
 	mov	DWORD [rsp+808], 0
-	jmp	.L170
-.L230:
+	jmp	.L173
+.L233:
 	cmp	QWORD [r12-8+r8*8], 0
 	lea	rax, [r8-1]
-	jne	.L229
+	jne	.L232
 	mov	r8, rax
-.L170:
+.L173:
 	test	r8, r8
-	jne	.L230
+	jne	.L233
 	mov	ecx, 32
 	mov	rdi, r12
 	mov	rax, r8
 	rep stosq
 	mov	QWORD [rsp+1072], 0
 	mov	DWORD [rsp+1080], 0
-.L173:
+.L176:
 	mov	ecx, 34
 	mov	rdi, rbp
 	mov	rsi, r13
@@ -746,17 +757,17 @@ inverse_pair_half:
 	mov	rdi, rbx
 	mov	rsi, r12
 	rep movsq
-	jmp	.L147
-.L125:
-	test	BYTE [rbx], 1
-	jne	.L127
-	jmp	.L130
-.L221:
-	cmp	QWORD [rbx+256], 0
-	jne	.L231
+	jmp	.L150
 .L128:
+	test	BYTE [rbx], 1
+	jne	.L130
+	jmp	.L133
+.L224:
+	cmp	QWORD [rbx+256], 0
+	jne	.L234
+.L131:
 	lea	rcx, [rbp-8+rdx*8]
-.L129:
+.L132:
 	mov	rsi, QWORD [rcx]
 	mov	rdi, rcx
 	sub	rcx, 8
@@ -765,11 +776,11 @@ inverse_pair_half:
 	mov	rax, rsi
 	and	eax, 1
 	cmp	rbp, rdi
-	jne	.L129
-	jmp	.L130
-.L217:
+	jne	.L132
+	jmp	.L133
+.L220:
 	cmp	rdx, 32
-	je	.L232
+	je	.L235
 	mov	eax, 32
 	lea	rsi, [rbp+0+rdx*8]
 	sub	rax, rdx
@@ -784,18 +795,18 @@ inverse_pair_half:
 	xor	eax, eax
 	rep stosq
 	mov	QWORD [rbp+256], rdx
-	jmp	.L172
-.L215:
+	jmp	.L175
+.L218:
 	cmp	rdx, 32
-	jne	.L138
-	jmp	.L141
-.L213:
+	jne	.L141
+	jmp	.L144
+.L216:
 	cmp	rdx, 32
-	jne	.L131
-	jmp	.L135
-.L219:
+	jne	.L134
+	jmp	.L138
+.L222:
 	cmp	rdx, 32
-	je	.L233
+	je	.L236
 	mov	eax, 32
 	lea	rsi, [rbx+rdx*8]
 	sub	rax, rdx
@@ -810,19 +821,19 @@ inverse_pair_half:
 	xor	eax, eax
 	rep stosq
 	mov	QWORD [rbx+256], rdx
-	jmp	.L147
-.L148:
+	jmp	.L150
+.L151:
 	mov	rax, QWORD [rsp+544]
 	xor	ecx, ecx
 	and	eax, 1
-	jne	.L123
+	jne	.L126
 	mov	rsi, QWORD [rsp+1072]
 	test	rsi, rsi
-	jne	.L152
+	jne	.L155
 	xor	r8d, r8d
-.L154:
+.L157:
 	lea	rcx, [r13+0+rdx*8]
-.L153:
+.L156:
 	mov	rdi, QWORD [rcx-8]
 	sub	rcx, 8
 	shld	rax, rdi, 63
@@ -830,37 +841,37 @@ inverse_pair_half:
 	mov	rax, rdi
 	and	eax, 1
 	cmp	rcx, r13
-	jne	.L153
-	jmp	.L149
-.L231:
+	jne	.L156
+	jmp	.L152
+.L234:
 	test	BYTE [rbx], 1
-	je	.L128
-	jmp	.L127
-.L222:
+	je	.L131
+	jmp	.L130
+.L225:
 	xor	ecx, ecx
 	test	BYTE [rsp+816], 1
-	jne	.L123
+	jne	.L126
 	mov	r8d, 32
 	cmp	rsi, r8
 	cmovbe	r8, rsi
-	jmp	.L149
-.L233:
+	jmp	.L152
+.L236:
 	mov	QWORD [rbx+256], 32
-	jmp	.L147
-.L232:
+	jmp	.L150
+.L235:
 	mov	QWORD [rbp+256], 32
-	jmp	.L172
-.L223:
+	jmp	.L175
+.L226:
 	cmp	rdx, 32
-	jne	.L155
-	jmp	.L160
-.L225:
+	jne	.L158
+	jmp	.L163
+.L228:
 	cmp	r8, 32
-	jne	.L163
-	jmp	.L165
-.L227:
+	jne	.L166
+	jmp	.L168
+.L230:
 	cmp	rdx, 32
-	je	.L234
+	je	.L237
 	mov	eax, 32
 	lea	rsi, [r13+0+rdx*8]
 	sub	rax, rdx
@@ -874,10 +885,10 @@ inverse_pair_half:
 	xor	eax, eax
 	rep stosq
 	mov	QWORD [rsp+800], rdx
-	jmp	.L170
-.L229:
+	jmp	.L173
+.L232:
 	cmp	r8, 32
-	je	.L235
+	je	.L238
 	mov	eax, 32
 	lea	rdx, [r12+r8*8]
 	sub	rax, r8
@@ -891,24 +902,151 @@ inverse_pair_half:
 	xor	eax, eax
 	rep stosq
 	mov	QWORD [rsp+1072], r8
-	jmp	.L173
-.L152:
+	jmp	.L176
+.L155:
 	test	BYTE [rsp+816], 1
-	jne	.L123
+	jne	.L126
 	mov	r8d, 32
 	cmp	rsi, r8
 	cmovbe	r8, rsi
-	jmp	.L154
-.L235:
+	jmp	.L157
+.L238:
 	mov	QWORD [rsp+1072], 32
-	jmp	.L173
-.L234:
+	jmp	.L176
+.L237:
 	mov	QWORD [rsp+800], 32
-	jmp	.L170
+	jmp	.L173
 global bignum_inverse
 bignum_inverse:
-	endbr64
-	push	r15
+    ; Fast path: one-word odd modulus. SysV args remain rdi=result, rsi=a, rdx=modulus.
+    test rdi, rdi
+    jz .generic_entry
+    test rsi, rsi
+    jz .generic_entry
+    test rdx, rdx
+    jz .generic_entry
+    mov rax, rdi
+    sub rax, rsi
+    cmp rax, 263
+    jbe .generic_entry
+    mov rax, rdi
+    sub rax, rdx
+    cmp rax, 263
+    jbe .generic_entry
+    cmp qword [rsi+256], 1
+    jne .generic_entry
+    cmp qword [rdx+256], 1
+    jne .generic_entry
+    mov r8, qword [rdx]
+    cmp r8, 3
+    jb .generic_entry
+    test r8, 1
+    jz .generic_entry
+    push r12
+    push r13
+    push r14
+    push r15
+    mov r9, qword [rsi]
+    xor r10d, r10d
+    mov r11, 1
+    ; Reduce a modulo m. The hot EEA itself remains binary; DIV is only input reduction.
+    xor edx, edx
+    mov rax, r9
+    div r8
+    mov r9, rdx
+    test r9, r9
+    jz .fast_no_inverse
+    xor edx, edx
+    mov rax, r8
+    mov r12, r8
+    xor r13d, r13d
+    xor r14d, r14d
+    mov r15, r11
+    ; u=r9, v=r8, x_u=r11, x_v=0; r12..r15 hold coefficient helpers.
+.fast_loop:
+    test r9, r9
+    jz .fast_no_inverse
+    test r8, r8
+    jz .fast_no_inverse
+    cmp r9, 1
+    je .fast_success_u
+    cmp r8, 1
+    je .fast_success_v
+    test r9, 1
+    jnz .fast_u_odd
+    shr r9, 1
+    test r11, 1
+    jz .fast_u_half_even
+    add r11, r12
+    rcr r11, 1
+    jmp .fast_loop
+.fast_u_half_even:
+    shr r11, 1
+    jmp .fast_loop
+.fast_u_odd:
+    test r8, 1
+    jnz .fast_both_odd
+    ; v is even: halve it and its coefficient x_v (x_v is kept in r13).
+    shr r8, 1
+    test r13, 1
+    jz .fast_v_half_even
+    add r13, r12
+    rcr r13, 1
+    jmp .fast_loop
+.fast_v_half_even:
+    shr r13, 1
+    jmp .fast_loop
+.fast_both_odd:
+    cmp r9, r8
+    jae .fast_sub_v
+    sub r8, r9
+    ; x_v = x_v - x_u modulo m.
+    mov rax, r13
+    sub rax, r11
+    jnc .fast_store_v
+    add rax, r12
+.fast_store_v:
+    mov r13, rax
+    jmp .fast_loop
+.fast_sub_v:
+    sub r9, r8
+    ; x_u = x_u - x_v modulo m.
+    mov rax, r11
+    sub rax, r13
+    jnc .fast_store_u
+    add rax, r12
+.fast_store_u:
+    mov r11, rax
+    jmp .fast_loop
+.fast_success_u:
+    mov rax, r11
+    jmp .fast_publish
+.fast_success_v:
+    mov rax, r13
+.fast_publish:
+    mov qword [rdi], rax
+    mov qword [rdi+256], 1
+    lea rdi, [rdi+8]
+    mov ecx, 31
+    xor eax, eax
+    rep stosq
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    xor eax, eax
+    ret
+.fast_no_inverse:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    mov eax, -5
+    ret
+.generic_entry:
+    endbr64
+    push r15
+
 	mov	rax, rdx
 	push	r14
 	push	r13
@@ -921,33 +1059,33 @@ bignum_inverse:
 	test	rax, rax
 	sete	cl
 	or	dl, cl
-	jne	.L295
+	jne	.L298
 	mov	r8, rdi
 	test	rdi, rdi
-	je	.L295
+	je	.L298
 	cmp	rdi, rsi
-	jb	.L365
+	jb	.L368
 	mov	rdx, rdi
 	xor	r12d, r12d
 	sub	rdx, rsi
 	cmp	rdx, 263
 	setbe	r12b
-.L239:
+.L242:
 	test	r12d, r12d
-	jne	.L308
+	jne	.L311
 	cmp	r8, rax
-	jnb	.L240
+	jnb	.L243
 	mov	rdx, rax
 	sub	rdx, r8
 	cmp	rdx, 263
-	jbe	.L308
-.L241:
+	jbe	.L311
+.L244:
 	mov	rdx, QWORD [rsi+256]
 	cmp	rdx, 32
-	ja	.L299
+	ja	.L302
 	mov	r15, QWORD [rax+256]
 	cmp	r15, 32
-	ja	.L299
+	ja	.L302
 	lea	rbx, [rsp+32]
 	lea	rbp, [rsp+304]
 	mov	ecx, 33
@@ -957,16 +1095,16 @@ bignum_inverse:
 	mov	rdi, rbp
 	mov	rsi, rax
 	rep movsq
-	jmp	.L243
-.L367:
+	jmp	.L246
+.L370:
 	cmp	QWORD [rbx-8+rdx*8], 0
 	lea	rax, [rdx-1]
-	jne	.L366
+	jne	.L369
 	mov	rdx, rax
-.L243:
+.L246:
 	test	rdx, rdx
-	jne	.L367
-.L242:
+	jne	.L370
+.L245:
 	mov	eax, 32
 	lea	rsi, [rbx+rdx*8]
 	sub	rax, rdx
@@ -980,19 +1118,19 @@ bignum_inverse:
 	mov	ecx, eax
 	xor	eax, eax
 	rep stosq
-.L246:
+.L249:
 	mov	QWORD [rsp+288], rdx
-	jmp	.L245
-.L369:
+	jmp	.L248
+.L372:
 	cmp	QWORD [rbp-8+r15*8], 0
 	lea	rax, [r15-1]
-	jne	.L368
+	jne	.L371
 	mov	r15, rax
-.L245:
+.L248:
 	test	r15, r15
-	jne	.L369
+	jne	.L372
 	mov	r12d, -4
-.L236:
+.L239:
 	add	rsp, 3032
 	mov	eax, r12d
 	pop	rbx
@@ -1002,24 +1140,24 @@ bignum_inverse:
 	pop	r14
 	pop	r15
 	ret
-.L365:
+.L368:
 	mov	rdx, rsi
 	xor	r12d, r12d
 	sub	rdx, rdi
 	cmp	rdx, 263
 	setbe	r12b
-	jmp	.L239
-.L240:
+	jmp	.L242
+.L243:
 	mov	rdx, r8
 	sub	rdx, rax
 	cmp	rdx, 263
-	ja	.L241
-.L308:
+	ja	.L244
+.L311:
 	mov	r12d, -3
-	jmp	.L236
-.L368:
+	jmp	.L239
+.L371:
 	cmp	r15, 32
-	je	.L370
+	je	.L373
 	mov	edx, 32
 	lea	rsi, [rbp+0+r15*8]
 	xor	eax, eax
@@ -1044,13 +1182,13 @@ bignum_inverse:
 	mov	QWORD [rsp+1104], 1
 	mov	QWORD [rsp+848], 1
 	cmp	r15, 1
-	jne	.L249
+	jne	.L252
 	cmp	QWORD [rsp+304], 1
-	ja	.L249
-.L250:
+	ja	.L252
+.L253:
 	mov	r12d, -5
-	jmp	.L236
-.L370:
+	jmp	.L239
+.L373:
 	mov	eax, 33
 	lea	r13, [rsp+576]
 	mov	rsi, rbp
@@ -1065,7 +1203,7 @@ bignum_inverse:
 	rep stosq
 	mov	QWORD [rsp+1104], 1
 	mov	QWORD [rsp+848], 1
-.L249:
+.L252:
 	mov	rdx, r13
 	mov	rsi, rbx
 	mov	rdi, rbx
@@ -1073,7 +1211,7 @@ bignum_inverse:
 	call	inverse_reduce
 	mov	r14, QWORD [rsp+288]
 	test	r14, r14
-	je	.L250
+	je	.L253
 	mov	eax, 33
 	mov	rsi, rbx
 	mov	r10, r15
@@ -1101,19 +1239,19 @@ bignum_inverse:
 	rep stosq
 	mov	QWORD [rsp+2736], 1
 	mov	QWORD [rsp+2480], 1
-.L251:
+.L254:
 	cmp	r15, 1
-	jne	.L277
+	jne	.L280
 	cmp	QWORD [rsp+32], 1
-	jne	.L277
+	jne	.L280
 	mov	r15, QWORD [rsp+8]
 	mov	r12d, DWORD [rsp+20]
 	mov	r8, QWORD [rsp+24]
-.L278:
+.L281:
 	cmp	QWORD [rsp+32], 1
 	lea	rbx, [rsp+1664]
-	jne	.L275
-.L280:
+	jne	.L278
+.L283:
 	lea	rbp, [rsp+2752]
 	mov	rsi, rbx
 	mov	rdx, r13
@@ -1124,80 +1262,80 @@ bignum_inverse:
 	mov	r8, QWORD [rsp+8]
 	lea	rbx, [rsp+1392]
 	test	eax, eax
-	je	.L281
+	je	.L284
 	cmp	QWORD [rsp+3008], 0
-	jne	.L371
-.L281:
+	jne	.L374
+.L284:
 	mov	ecx, 33
 	mov	rdi, rbx
 	mov	rsi, rbp
 	rep movsq
-.L282:
+.L285:
 	mov	rdx, QWORD [rsp+1648]
 	mov	eax, 32
 	cmp	rdx, rax
 	cmova	rdx, rax
-	jmp	.L284
-.L373:
+	jmp	.L287
+.L376:
 	cmp	QWORD [rbx-8+rdx*8], 0
 	lea	r9, [rdx-1]
-	jne	.L372
+	jne	.L375
 	mov	rdx, r9
-.L284:
+.L287:
 	test	rdx, rdx
-	jne	.L373
+	jne	.L376
 	mov	ecx, 32
 	mov	rdi, rbx
 	mov	rax, rdx
 	rep stosq
 	mov	QWORD [rsp+1648], 0
-.L290:
+.L293:
 	mov	ecx, 33
 	mov	rdi, r8
 	mov	rsi, rbx
 	rep movsq
-	jmp	.L236
-.L277:
+	jmp	.L239
+.L280:
 	cmp	r12, 1
-	jne	.L279
+	jne	.L282
 	cmp	QWORD [rsp+304], 1
-	jne	.L279
-.L276:
+	jne	.L282
+.L279:
 	mov	r14, r15
 	mov	r12d, DWORD [rsp+20]
 	mov	r15, QWORD [rsp+8]
 	mov	r8, QWORD [rsp+24]
 	cmp	r14, 1
-	je	.L278
-.L275:
+	je	.L281
+.L278:
 	cmp	QWORD [rsp+560], 1
-	jne	.L250
+	jne	.L253
 	cmp	QWORD [rsp+304], 1
-	jne	.L250
+	jne	.L253
 	lea	rbx, [rsp+1936]
-	jmp	.L280
-.L366:
+	jmp	.L283
+.L369:
 	cmp	rdx, 32
-	jne	.L242
-	jmp	.L246
-.L279:
+	jne	.L245
+	jmp	.L249
+.L282:
 	mov	r14d, 32
 	test	r15, r15
-	jne	.L257
-.L259:
+	jne	.L260
+.L262:
 	mov	eax, 32
 	cmp	r15, rax
 	cmova	r15, rax
-	jmp	.L254
-.L375:
+	jmp	.L257
+.L378:
 	cmp	QWORD [rbx-8+r15*8], 0
 	lea	rax, [r15-1]
-	jne	.L374
+	jne	.L377
 	mov	r15, rax
-.L254:
+.L257:
 	test	r15, r15
-	jne	.L375
-.L253:
+	jne	.L378
+.L256:
 	mov	rcx, r14
 	lea	rdx, [rbx+r15*8]
 	lea	rsi, [rsp+2208]
@@ -1216,15 +1354,15 @@ bignum_inverse:
 	mov	QWORD [rsp+288], r15
 	call	inverse_pair_half
 	test	eax, eax
-	je	.L250
+	je	.L253
 	test	r15, r15
-	je	.L259
-.L257:
+	je	.L262
+.L260:
 	mov	rax, QWORD [rsp+32]
 	and	eax, 1
-	jne	.L268
+	jne	.L271
 	lea	rdx, [rbx+r15*8]
-.L252:
+.L255:
 	mov	rcx, QWORD [rdx-8]
 	sub	rdx, 8
 	shld	rax, rcx, 63
@@ -1232,9 +1370,9 @@ bignum_inverse:
 	mov	rax, rcx
 	and	eax, 1
 	cmp	rdx, rbx
-	jne	.L252
-	jmp	.L259
-.L266:
+	jne	.L255
+	jmp	.L262
+.L269:
 	mov	ecx, 32
 	lea	rdx, [rbp+0+r12*8]
 	lea	rsi, [rsp+2480]
@@ -1253,27 +1391,27 @@ bignum_inverse:
 	mov	QWORD [rsp+560], r12
 	call	inverse_pair_half
 	test	eax, eax
-	je	.L250
-.L268:
+	je	.L253
+.L271:
 	test	r12, r12
-	jne	.L261
-.L265:
+	jne	.L264
+.L268:
 	mov	eax, 32
 	cmp	r12, rax
 	cmova	r12, rax
-	jmp	.L262
-.L377:
+	jmp	.L265
+.L380:
 	cmp	QWORD [rbp-8+r12*8], 0
 	lea	rax, [r12-1]
-	jne	.L376
+	jne	.L379
 	mov	r12, rax
-.L262:
+.L265:
 	test	r12, r12
-	jne	.L377
-	jmp	.L266
-.L376:
+	jne	.L380
+	jmp	.L269
+.L379:
 	cmp	r12, 32
-	jne	.L266
+	jne	.L269
 	mov	rcx, r13
 	lea	rdx, [rsp+1120]
 	lea	rsi, [rsp+2480]
@@ -1281,13 +1419,13 @@ bignum_inverse:
 	lea	rdi, [rsp+1936]
 	call	inverse_pair_half
 	test	eax, eax
-	je	.L250
-.L261:
+	je	.L253
+.L264:
 	mov	rax, QWORD [rsp+304]
 	and	eax, 1
-	jne	.L263
+	jne	.L266
 	lea	rdx, [rbp+0+r12*8]
-.L264:
+.L267:
 	mov	rcx, QWORD [rdx-8]
 	sub	rdx, 8
 	shld	rax, rcx, 63
@@ -1295,11 +1433,11 @@ bignum_inverse:
 	mov	rax, rcx
 	and	eax, 1
 	cmp	rdx, rbp
-	jne	.L264
-	jmp	.L265
-.L374:
+	jne	.L267
+	jmp	.L268
+.L377:
 	cmp	r15, 32
-	jne	.L253
+	jne	.L256
 	mov	rcx, r13
 	lea	rdx, [rsp+1120]
 	lea	rsi, [rsp+2208]
@@ -1307,21 +1445,21 @@ bignum_inverse:
 	lea	rdi, [rsp+1664]
 	call	inverse_pair_half
 	test	eax, eax
-	jne	.L257
-	jmp	.L250
-.L263:
+	jne	.L260
+	jmp	.L253
+.L266:
 	cmp	r12, r15
-	jne	.L362
+	jne	.L365
 	mov	rax, r15
-.L270:
+.L273:
 	sub	rax, 1
 	mov	rdx, QWORD [rbx+rax*8]
 	mov	rcx, QWORD [rbp+0+rax*8]
 	cmp	rdx, rcx
-	jne	.L378
+	jne	.L381
 	test	rax, rax
-	jne	.L270
-.L271:
+	jne	.L273
+.L274:
 	lea	r14, [rsp+1392]
 	mov	rdx, rbp
 	mov	rsi, rbx
@@ -1350,16 +1488,16 @@ bignum_inverse:
 	lea	rdi, [rsp+2208]
 	rep movsq
 	test	r15, r15
-	je	.L379
-.L274:
+	je	.L382
+.L277:
 	mov	r12, QWORD [rsp+560]
 	test	r12, r12
-	jne	.L251
-	jmp	.L276
-.L378:
+	jne	.L254
+	jmp	.L279
+.L381:
 	cmp	rcx, rdx
-.L362:
-	jb	.L271
+.L365:
+	jb	.L274
 	lea	r14, [rsp+1392]
 	mov	rdx, rbx
 	mov	rsi, rbp
@@ -1386,10 +1524,10 @@ bignum_inverse:
 	lea	rdi, [rsp+2480]
 	mov	rsi, r14
 	rep movsq
-	jmp	.L274
-.L372:
+	jmp	.L277
+.L375:
 	cmp	rdx, 32
-	je	.L380
+	je	.L383
 	mov	eax, 32
 	lea	rsi, [rbx+rdx*8]
 	sub	rax, rdx
@@ -1404,46 +1542,46 @@ bignum_inverse:
 	rep stosq
 	mov	QWORD [rsp+1648], rdx
 	cmp	r15, rdx
-	je	.L292
-	jmp	.L363
-.L382:
+	je	.L295
+	jmp	.L366
+.L385:
 	sub	r9, 1
-.L292:
+.L295:
 	mov	rax, QWORD [rbx+r9*8]
 	mov	rdx, QWORD [r13+0+r9*8]
 	cmp	rax, rdx
-	jne	.L381
+	jne	.L384
 	test	r9, r9
-	jne	.L382
-.L289:
+	jne	.L385
+.L292:
 	mov	r12d, -6
-	jmp	.L236
-.L381:
+	jmp	.L239
+.L384:
 	cmp	rdx, rax
-.L363:
-	jb	.L289
-	jmp	.L290
-.L371:
+.L366:
+	jb	.L292
+	jmp	.L293
+.L374:
 	mov	rdx, rbp
 	mov	rsi, r13
 	mov	rdi, rbx
 	call	inverse_sub_raw
 	mov	r8, QWORD [rsp+8]
-	jmp	.L282
-.L299:
+	jmp	.L285
+.L302:
 	mov	r12d, -2
-	jmp	.L236
-.L380:
+	jmp	.L239
+.L383:
 	mov	QWORD [rsp+1648], 32
 	cmp	r15, 32
-	je	.L292
-	jmp	.L289
-.L295:
+	je	.L295
+	jmp	.L292
+.L298:
 	mov	r12d, -1
-	jmp	.L236
-.L379:
+	jmp	.L239
+.L382:
 	mov	r15, QWORD [rsp+8]
 	mov	r12d, DWORD [rsp+20]
 	mov	r8, QWORD [rsp+24]
-	jmp	.L275
+	jmp	.L278
 section .note.GNU-stack noalloc noexec nowrite progbits

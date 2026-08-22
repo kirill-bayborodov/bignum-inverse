@@ -17,7 +17,13 @@ typedef struct inverse_signed {
     int negative; /**< Non-zero when the coefficient is represented as negative. */
 } inverse_signed_t;
 
-/** @brief Returns whether two complete caller-owned records overlap. */
+/**
+ * @brief Detects overlap between two complete bignum records.
+ * @details Uses byte ranges before dereferencing either record.
+ * @param[in] left Borrowed record address; may be NULL only for internal misuse.
+ * @param[in] right Borrowed record address; may be NULL only for internal misuse.
+ * @return Non-zero when the complete records overlap; zero otherwise.
+ */
 static int inverse_overlap(const bignum_t *left, const bignum_t *right)
 {
     const uintptr_t a = (uintptr_t)left;
@@ -26,7 +32,12 @@ static int inverse_overlap(const bignum_t *left, const bignum_t *right)
     return a < b ? (b - a) < size : (a - b) < size;
 }
 
-/** @brief Normalizes a private unsigned record and clears its unused tail. */
+/**
+ * @brief Normalizes a private unsigned record and clears unused words.
+ * @details Trims zero most-significant words and preserves the zero invariant.
+ * @param[in,out] value Private caller-owned temporary record; never NULL here.
+ * @return None; the record is normalized in place.
+ */
 static void inverse_normalize(bignum_t *value)
 {
     size_t length = value->len;
@@ -36,7 +47,12 @@ static void inverse_normalize(bignum_t *value)
     value->len = length;
 }
 
-/** @brief Compares two normalized unsigned private records. */
+/**
+ * @brief Compares two normalized unsigned records.
+ * @param[in] left Borrowed normalized record.
+ * @param[in] right Borrowed normalized record.
+ * @return Positive, zero or negative according to unsigned numeric order.
+ */
 static int inverse_cmp(const bignum_t *left, const bignum_t *right)
 {
     if (left->len != right->len) return left->len > right->len ? 1 : -1;
@@ -47,7 +63,14 @@ static int inverse_cmp(const bignum_t *left, const bignum_t *right)
     return 0;
 }
 
-/** @brief Subtracts right from left when left is at least right. */
+/**
+ * @brief Subtracts one bounded unsigned record from another.
+ * @details The precondition left >= right prevents unsigned underflow.
+ * @param[out] out Private output record, fully overwritten.
+ * @param[in] left Borrowed normalized minuend.
+ * @param[in] right Borrowed normalized subtrahend not greater than left.
+ * @return None; output is normalized by the caller when required.
+ */
 static void inverse_sub_raw(bignum_t *out, const bignum_t *left, const bignum_t *right)
 {
     uint64_t borrow = 0U;
@@ -63,7 +86,13 @@ static void inverse_sub_raw(bignum_t *out, const bignum_t *left, const bignum_t 
     inverse_normalize(out);
 }
 
-/** @brief Adds two unsigned records into a CAPACITY+1 word buffer. */
+/**
+ * @brief Adds two unsigned records into a bounded wide buffer.
+ * @param[out] out Caller-provided buffer with BIGNUM_CAPACITY+1 words.
+ * @param[in] left Borrowed normalized addend.
+ * @param[in] right Borrowed normalized addend.
+ * @return Number of significant words in out, including a carry word.
+ */
 static size_t inverse_add_wide(uint64_t *out, const bignum_t *left, const bignum_t *right)
 {
     uint64_t carry = 0U;
@@ -83,7 +112,12 @@ static size_t inverse_add_wide(uint64_t *out, const bignum_t *left, const bignum
     return length + (carry != 0U);
 }
 
-/** @brief Divides a normalized unsigned record by two in place. */
+/**
+ * @brief Divides a normalized unsigned record by two in place.
+ * @details The caller establishes that the operation is exact for its residue state.
+ * @param[in,out] value Private normalized record to modify.
+ * @return None; value remains normalized.
+ */
 static void inverse_half(bignum_t *value)
 {
     uint64_t carry = 0U;
@@ -95,20 +129,35 @@ static void inverse_half(bignum_t *value)
     inverse_normalize(value);
 }
 
-/** @brief Returns whether a normalized unsigned record is even. */
+/**
+ * @brief Tests the parity of a normalized unsigned record.
+ * @param[in] value Borrowed normalized record.
+ * @return Non-zero for zero or even values; zero for odd values.
+ */
 static int inverse_even(const bignum_t *value)
 {
     return value->len == 0U || (value->words[0] & 1U) == 0U;
 }
 
-/** @brief Normalizes signed magnitude zero to a non-negative representation. */
+/**
+ * @brief Canonicalizes a signed-magnitude coefficient.
+ * @param[in,out] value Private signed coefficient; zero is made non-negative.
+ * @return None; magnitude and sign are normalized together.
+ */
 static void inverse_signed_normalize(inverse_signed_t *value)
 {
     inverse_normalize(&value->magnitude);
     if (value->magnitude.len == 0U) value->negative = 0;
 }
 
-/** @brief Computes signed left-right, assuming the output fits CAPACITY words. */
+/**
+ * @brief Computes signed left minus right in fixed capacity.
+ * @details The caller guarantees the mathematical result fits the magnitude buffer.
+ * @param[out] out Private signed output coefficient.
+ * @param[in] left Borrowed signed coefficient.
+ * @param[in] right Borrowed signed coefficient.
+ * @return None; out is overwritten and normalized.
+ */
 static void inverse_signed_sub(inverse_signed_t *out, const inverse_signed_t *left,
                                const inverse_signed_t *right)
 {
@@ -137,7 +186,14 @@ static void inverse_signed_sub(inverse_signed_t *out, const inverse_signed_t *le
     inverse_signed_normalize(out);
 }
 
-/** @brief Adds signed values using the existing signed subtraction primitive. */
+/**
+ * @brief Adds two signed-magnitude coefficients.
+ * @details Reuses signed subtraction so sign and magnitude rules stay centralized.
+ * @param[out] out Private signed output coefficient.
+ * @param[in] left Borrowed signed coefficient.
+ * @param[in] right Borrowed signed coefficient.
+ * @return None; out is overwritten and normalized.
+ */
 static void inverse_signed_add(inverse_signed_t *out, const inverse_signed_t *left,
                                const inverse_signed_t *right)
 {
@@ -146,7 +202,15 @@ static void inverse_signed_add(inverse_signed_t *out, const inverse_signed_t *le
     inverse_signed_sub(out, left, &neg);
 }
 
-/** @brief Halves both Bezout coefficients while preserving u = a*x + m*y. */
+/**
+ * @brief Halves a Bezout coefficient pair without changing its residue identity.
+ * @details When x is odd, adds modulus to x and subtracts a from y before halving.
+ * @param[in,out] x Signed coefficient of a; modified in place.
+ * @param[in,out] y Signed coefficient of modulus; modified in place.
+ * @param[in] a Reduced input value used by the congruence transformation.
+ * @param[in] m Modulus used by the congruence transformation.
+ * @return Non-zero when both coefficients were halved successfully; zero on capacity failure.
+ */
 static int inverse_pair_half(inverse_signed_t *x, inverse_signed_t *y,
                              const bignum_t *a, const bignum_t *m)
 {
@@ -167,7 +231,14 @@ static int inverse_pair_half(inverse_signed_t *x, inverse_signed_t *y,
     return 1;
 }
 
-/** @brief Reduces input modulo modulus using MSB-first binary division. */
+/**
+ * @brief Reduces an unsigned record modulo a positive modulus.
+ * @details Scans input bits most-significant first and keeps remainder below modulus.
+ * @param[out] out Private normalized remainder record.
+ * @param[in] input Borrowed normalized input record.
+ * @param[in] modulus Borrowed non-zero normalized modulus.
+ * @return None; out is fully overwritten.
+ */
 static void inverse_reduce(bignum_t *out, const bignum_t *input, const bignum_t *modulus)
 {
     bignum_t remainder;

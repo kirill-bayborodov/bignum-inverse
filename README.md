@@ -1,9 +1,11 @@
 # bignum-inverse
 
+**Next revision:** 1.1.0 — one-word odd-modulus ASM fast path
+
 [![C/ASM CI](https://github.com/kirill-bayborodov/bignum-inverse/actions/workflows/ci.yml/badge.svg)](https://github.com/kirill-bayborodov/bignum-inverse/actions/workflows/ci.yml)
 [![GitHub release](https://img.shields.io/github/v/release/kirill-bayborodov/bignum-inverse?label=release)](https://github.com/kirill-bayborodov/bignum-inverse/releases/latest)
 
-`bignum-inverse` computes the modular multiplicative inverse of an unsigned `bignum_t` value and a positive modulus with the signed binary extended Euclidean algorithm. The repository contains two implementations with the same typed public contract: a portable C11 reference implementation in `src/bignum_inverse.c` and a standalone YASM x86-64 implementation in `src/bignum_inverse.asm`. The assembly path conforms to the System V AMD64 ABI and does not call C functions.
+`bignum-inverse` computes the modular multiplicative inverse of an unsigned `bignum_t` value and a positive modulus with the signed binary extended Euclidean algorithm. The repository contains two implementations with the same typed public contract: a portable C11 reference implementation in `src/bignum_inverse.c` and a standalone YASM x86-64 implementation in `src/bignum_inverse.asm`. The assembly path conforms to the System V AMD64 ABI and does not call C functions. Its P0 path specializes one-word odd moduli with register-resident binary EEA state; multiword and even-modulus inputs use the generic fixed-capacity path.
 
 The operation is transactional. It validates all pointers, lengths and result/input ranges before touching the destination, copies both inputs into private fixed-size records, reduces `a` modulo `modulus`, maintains two signed Bezout coefficient pairs, halves even residues with the congruence-preserving `(x + modulus, y - a)` transformation, subtracts residues until one reaches one, and publishes the coefficient of `a` reduced into `[0, modulus)`. No heap allocation or mutable global state is used.
 
@@ -33,6 +35,7 @@ For a local benchmark-framework distribution, download the latest successful `di
 
 - **Binary extended Euclidean algorithm:** removes powers of two, maintains Bezout coefficients and uses subtraction rather than general division in the convergence loop.
 - **Two equivalent backends:** C11 reference source and standalone YASM x86-64 production source share one header and one test suite.
+- **ASM P0 fast path:** one-word odd-modulus calls avoid generic record traffic while preserving the same status and transactional ABI.
 - **Typed status API:** named validation, overlap, zero-modulus, no-inverse and internal-error statuses avoid anonymous integer contracts.
 - **Transactional output:** `result` is unchanged for every documented failure status.
 - **Fixed-capacity arithmetic:** the implementation is bounded by `BIGNUM_CAPACITY` and performs no allocation.

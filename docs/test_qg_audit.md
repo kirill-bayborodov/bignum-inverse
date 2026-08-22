@@ -23,10 +23,10 @@ make test CONFIG=release USE_ASM=yes
 make test_sanitize CONFIG=debug USE_ASM=no SAN=address
 ```
 
-All completed runs reported `=== Summary: 0 / 5 failed ===`; the sanitizer run reported `tests=5, failed=0, sanitizer_issues=0`.
+All completed runs reported `=== Summary: 0 / 5 failed ===`; the sanitizer run reported `tests=5, failed=0, sanitizer_issues=0`. After the ASM P0 fast path was added, the same five-binary ASM regression was repeated successfully. A dedicated 2,000-case timeout reproducer also completed all cases, including non-coprime inputs that must terminate with `NO_INVERSE`.
 
 The C11 source coverage run used GCC `--coverage` and executed the deterministic, extra and MT binaries. The combined source report reached **100.00% line coverage** in the deterministic and extra passes; the aggregate MT-only pass was lower because it intentionally exercises the reentrant success path only. The retained report is `docs/coverage/bignum_inverse.c.gcov`.
 
 ## Review conclusions
 
-The tests do not include an invalid overlapping pointer fabricated by byte-offset arithmetic because the public contract rejects any result/input record overlap before dereference; exact aliasing is the portable and deterministic representation of that forbidden class. The benchmark adapter deliberately uses a fixed prime modulus and coprime input so benchmark failure statuses cannot be confused with measured operation cost.
+The tests do not include an invalid overlapping pointer fabricated by byte-offset arithmetic because the public contract rejects any result/input record overlap before dereference; exact aliasing is the portable and deterministic representation of that forbidden class. The benchmark adapter deliberately uses a fixed prime modulus and coprime input so benchmark failure statuses cannot be confused with measured operation cost. The ASM P0 fast path is limited to one-word odd moduli; multiword and even-modulus inputs continue through the generic path and remain covered by the shared regression suite.
