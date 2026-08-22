@@ -1,9 +1,9 @@
 ; @file bignum_inverse.asm
 ; @brief Standalone x86-64 YASM correctness implementation synchronized with C11 variant B.
-; @version 0.2.1
+; @version 0.2.2
 ; @details SysV AMD64 ABI; no global mutable state; transactional output contract.
 ; @revision 0.2.1 Generated Variant B correctness parity baseline.
-; @revision 0.2.2-dev P1 caller-saved register-only one-word odd-modulus fast path;
+; @revision 0.2.2 P1 caller-saved register-only one-word odd-modulus fast path;
 ;            generated Variant B remains the generic fallback for all other inputs.
 BITS 64
 default rel

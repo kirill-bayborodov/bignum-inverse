@@ -1,7 +1,7 @@
 /**
  * @file bignum_inverse.c
  * @brief C11 reference implementation of modular multiplicative inverse.
- * @version 0.2.1
+ * @version 0.2.2
  * @date 2026-08-22
  * @details Uses Stein's binary extended Euclidean algorithm. Variant B keeps
  * odd-modulus coefficients reduced modulo m and handles even moduli through
