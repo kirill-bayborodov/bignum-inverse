@@ -1,6 +1,6 @@
 ; @file bignum_inverse.asm
 ; @brief Optimized x86-64 YASM implementation of modular multiplicative inverse.
-; @version 1.1.0
+; @version 0.1.0
 ; @details SysV AMD64 ABI: rdi=result, rsi=a, rdx=modulus; caller-saved rax/rcx/r8-r11 may be clobbered; callee-saved registers are preserved. The destination is written only on SUCCESS, and all records use bignum_t {words[32], len} with 64-bit little-endian words.
 BITS 64
 default rel

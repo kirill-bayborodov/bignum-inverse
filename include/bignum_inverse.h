@@ -1,7 +1,7 @@
 /**
  * @file bignum_inverse.h
  * @brief Public typed API for modular multiplicative inverse of bignum_t values.
- * @version 1.0.0
+ * @version 0.1.0
  * @date 2026-08-22
  * @details Computes x in the canonical range 0 <= x < m such that
  * a*x == 1 (mod m), when gcd(a,m) == 1. The reference and assembly

@@ -1,6 +1,6 @@
 # bignum-inverse
 
-**Next revision:** 1.1.0 — one-word odd-modulus ASM fast path
+**Release candidate:** v0.1.0 — one-word odd-modulus ASM fast path
 
 [![C/ASM CI](https://github.com/kirill-bayborodov/bignum-inverse/actions/workflows/ci.yml/badge.svg)](https://github.com/kirill-bayborodov/bignum-inverse/actions/workflows/ci.yml)
 [![GitHub release](https://img.shields.io/github/v/release/kirill-bayborodov/bignum-inverse?label=release)](https://github.com/kirill-bayborodov/bignum-inverse/releases/latest)
