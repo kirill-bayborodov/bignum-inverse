@@ -60,3 +60,7 @@ After removing the callee-saved register prologue, the candidate passed the comp
 | near-capacity | 7,753.600 | 317.550 | 0.041x | identical |
 
 The current benchmark adapter deliberately normalizes `a.len` to one word for its inverse workload. Consequently, this matrix validates dispatch overhead and one-word performance across profile labels, but it is **not** evidence of a multiword optimization. The pre-existing 18-point matrix remains the authoritative multiword/generic-path comparison. Candidate 2 is a valid performance improvement for the one-word odd-modulus workload and leaves all other inputs on the correctness-preserving generated fallback.
+
+## Sanitizer gate for optimization checkpoint
+
+Because the immutable Makefile did not activate its `SAN` argument (`SAN=(none)` was reported), the inverse test sources were compiled manually with `-fsanitize=address -fno-omit-frame-pointer` and executed with leak detection enabled. Deterministic, extended fuzz, multithreaded and runner tests all exited successfully; no AddressSanitizer error or leak was reported.
