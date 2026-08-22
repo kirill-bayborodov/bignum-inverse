@@ -140,3 +140,89 @@ The duplicated scalar paths were replaced by one runtime-parameterized kernel fo
 The exhaustive C11 differential harness covered 224 cases across `d={3,5,7,9,11,13,15}`, lengths 2–32 and four odd modulus patterns. Status, result length and digest matched in every case. The same 224 cases passed under AddressSanitizer with leak detection. The release suite remained `0 / 5 failed`.
 
 The first candidate exposed an incorrect low-to-high modulus scan; this was corrected before acceptance. The accepted candidate is therefore the one represented by the differential PASS, not the initial failed attempt.
+
+## General multiword EEA hot-path step — identity operand
+
+As the first safe step toward the general multiword EEA kernel, the dispatcher now recognizes normalized `a=1` for any valid modulus greater than one. The mathematical result is exactly one, so the path publishes a canonical one-word result and clears the remaining capacity without entering the 4.9 KiB generated generic stack frame. Invalid, zero and modulus-one cases still fall through to the established validation path.
+
+A dedicated test covered every modulus length 1–32 under AddressSanitizer with leak detection; all outputs were canonical and the full release suite remained `0 / 5 failed`.
+
+| Modulus words | C11 ns/call | ASM identity path ns/call | Checksums |
+|---:|---:|---:|---|
+| 1 | 2,576.647 | 42.778 | identical |
+| 2 | 2,542.392 | 42.583 | identical |
+| 4 | 2,606.786 | 42.560 | identical |
+| 8 | 2,589.006 | 69.290 | identical |
+| 16 | 2,705.012 | 44.707 | identical |
+| 32 | 2,748.193 | 44.813 | identical |
+
+This is a safe dispatch optimization, not yet a general EEA arithmetic replacement. Arbitrary multiword `a` continues through the generated Variant B kernel until a subsequent compare/subtract/halve step is proven independently.
+
+## Multiword compare/subtract hot-path step — a = m - 1
+
+The first direct compare/subtract optimization for arbitrary multiword operands recognizes `a = m - 1` by subtracting one from the modulus from least-significant to most-significant word and comparing each word without modifying borrowed inputs. On a match, the result is copied and normalized transactionally; otherwise execution falls through to the existing Variant B EEA path.
+
+The exact probe covered lengths 1–32, including the full-capacity 2048-bit case, and passed under AddressSanitizer with leak detection. The full release suite passed with `0 / 5 failed`.
+
+| Modulus words | C11 ns/call | ASM compare/subtract path ns/call | Checksums |
+|---:|---:|---:|---|
+| 1 | 2,452.315 | 50.582 | identical |
+| 2 | 11,927.089 | 50.468 | identical |
+| 4 | 23,961.473 | 51.948 | identical |
+| 8 | 48,667.877 | 51.314 | identical |
+| 16 | 106,575.565 | 56.860 | identical |
+| 32 | 297,881.063 | 99.672 | identical |
+
+A development probe initially exposed a high-to-low borrow-order error; the corrected implementation uses the required low-to-high subtraction direction and was re-run through the complete regression before acceptance.
+
+## Native 2-word arbitrary-a EEA kernel
+
+A native YASM kernel now handles normalized odd two-word moduli and reduced operands with one or two words. It keeps `u`, `v`, `cu` and `cv` in registers, uses `SHR/RCR` for 128-bit halving, computes odd residue halves as `(c+m)/2` with an overflow-safe decomposition, and performs modular coefficient subtraction without signed-magnitude temporaries. Unsupported shapes and kernel errors return to the published generic Variant B fallback.
+
+The kernel was compared against the C11 reference on 50,000 deterministic randomized cases covering one- and two-word `a`, arbitrary two-word odd moduli, coprime and non-coprime pairs. Status, normalized length and all output words matched in every case. The same 50,000 cases passed under AddressSanitizer with leak detection. The full release suite remained `0 / 5 failed`.
+
+| Workload | C11 ns/call | Native ASM ns/call | Checksums |
+|---|---:|---:|---|
+| 2-word modulus, a=3 | 14,938.945 | 412.747 | identical |
+| 2-word modulus, a=7 | 16,734.295 | 437.236 | identical |
+| 2-word modulus, large scalar | 18,847.357 | 531.951 | identical |
+
+The direct call path preserves SysV ABI stack alignment and saves `rsi`/`rdx` around the dispatcher call so an unsuccessful native attempt can safely enter the generic fallback.
+
+## Native 3-word tuning2
+
+The native x86-64 YASM three-word kernel was tuned to avoid the redundant modulus self-copy after converting immutable modulus accesses to direct `[rbx+offset]` loads. Public differential parity passed 20,000/20,000 cases, the same workload passed ASan with leak detection, and the full release suite remained `0 / 5 failed`.
+
+Five repeated benchmark runs used three valid normalized odd three-word workloads. Median latency was approximately 35.5 us ASM versus 36.1 us C11 for case 0, 37.1 us versus 38.2 us for case 1, and 35.2 us versus 36.1 us for case 2. This corresponds to median improvements of approximately 1.5%, 3.1%, and 2.7%, respectively. The gain is modest and subject to host scheduling noise; it is recorded as a positive tuning result, not as a large performance claim. The tuning2 source is currently local and has not been committed or pushed.
+
+## Native 4-word arbitrary-a EEA kernel — Variant B
+
+The verified Variant B native four-word kernel is now connected to the public dispatcher for normalized odd four-word moduli and reduced operands of one through four words. Unsupported shapes and nonzero candidate statuses retain the existing native 3-word, native 2-word, scalar, or generated Variant B fallback chain. The dispatcher preserves SysV AMD64 stack alignment and restores its saved argument registers before fallback.
+
+The direct candidate differential passed 30,000/30,000 deterministic randomized cases against the C11 reference. The public-dispatcher differential independently passed 30,000/30,000 cases, including successful inverses and `BIGNUM_INVERSE_ERROR_NO_INVERSE` status parity. Release regression passed all five test binaries (`0 / 5 failed`), and the sanitizer regression completed without AddressSanitizer diagnostics.
+
+The immutable repository benchmark target could not collect `cache-misses:u` in the sandbox because that hardware event is unavailable. Therefore, the following controlled matrix uses the same normalized four-word operands, 2,000 timed calls per implementation and workload, identical checksum validation, `-O3 -march=x86-64`, and `CLOCK_MONOTONIC` elapsed time. The measurements target the direct C11 reference and direct native YASM candidate to isolate the four-word EEA arithmetic rather than dispatcher noise.
+
+| Workload | C11 ns/call | Native ASM ns/call | ASM/C11 | Checksum |
+|---|---:|---:|---:|---|
+| `a=3`, odd 4-word modulus | 32,990.11 | 3,390.91 | 0.103x | identical |
+| `a=7`, odd 4-word modulus | 29,446.35 | 2,391.49 | 0.081x | identical |
+| large 4-word `a`, odd 4-word modulus | 52,540.37 | 3,683.28 | 0.070x | identical |
+
+The native kernel is approximately 9.7x, 12.3x and 14.3x faster on these three controlled points, respectively. These results are workload-specific timing measurements rather than a claim about every generic CRT or even-modulus path; those paths remain on the established fallback implementation. The four-word candidate therefore satisfies the current performance gate for the targeted odd-modulus workload while retaining the C11-equivalent fallback behavior outside its supported domain.
+
+The controlled harness and raw output were kept outside the repository under `/tmp/inverse_4word_bench.c` and `/tmp/inverse_4word_bench.txt`; the repository report records the reproducible method and measured results.
+
+## Quality Gate checklist — native 4-word step
+
+| Artifact / gate | Result | Evidence |
+|---|---|---|
+| Candidate direct differential | PASS | 30,000/30,000 versus C11 |
+| Public dispatcher differential | PASS | 30,000/30,000, status and output parity |
+| Release deterministic and extended tests | PASS | `make test CONFIG=release`, 0/5 failed |
+| Multithreaded and adapter tests | PASS | Included in release and sanitizer suites |
+| Sanitizer regression | PASS | `make test CONFIG=debug SAN=asan`; no ASan diagnostics |
+| Targeted 4-word benchmark | PASS | Three workloads, identical checksums, ASM faster |
+| Makefile / CI changes | NONE | No modifications made |
+
+References: [1](/home/ubuntu/projects/bignum-inverse/docs/variant_b_design.md), [2](/home/ubuntu/projects/bignum-inverse/docs/variant_b_c11_report.md)

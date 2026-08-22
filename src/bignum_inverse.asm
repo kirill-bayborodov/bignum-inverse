@@ -2007,8 +2007,142 @@ bignum_inverse:
     cmp rax, 264
     jb .Lgeneric_entry
 .Lcheck_lengths:
+    ; Multiword negation fast path: (-1)^{-1} mod m = -1 mod m.
+    ; Recognize a == m-1 without modifying either borrowed input.
+    mov r10, [rsi+256]
+    cmp r10, 1
+    jb .Lidentity_check
+    cmp r10, 32
+    ja .Lidentity_check
+    cmp r10, [rdx+256]
+    jne .Lidentity_check
+    xor eax, eax
+    mov r11, 1
+.Lnegone_compare:
+    mov r8, [rdx+rax*8]
+    sub r8, r11
+    setc r11b
+    movzx r11, r11b
+    cmp r8, [rsi+rax*8]
+    jne .Lidentity_check
+    inc rax
+    cmp rax, r10
+    jb .Lnegone_compare
+    mov rcx, r10
+    mov r8, rdi
+    rep movsq
+    mov qword [r8+256], r10
+    lea rdi, [r8+r10*8]
+    mov rcx, 32
+    sub rcx, r10
+    xor eax, eax
+    rep stosq
+    xor eax, eax
+    ret
+.Lidentity_check:
+    ; Multiword identity fast path: 1^{-1} mod m = 1 for m > 1.
+    cmp qword [rsi+256], 1
+    jne .Lscalar_divisor_entry
+    cmp qword [rsi], 1
+    jne .Lscalar_divisor_entry
+    mov r10, [rdx+256]
+    cmp r10, 1
+    jb .Lgeneric_entry
+    cmp r10, 32
+    ja .Lgeneric_entry
+    cmp r10, 1
+    jne .Lidentity_multiword
+    cmp qword [rdx], 2
+    jb .Lgeneric_entry
+.Lidentity_multiword:
+    cmp qword [rdx+r10*8-8], 0
+    je .Lgeneric_entry
+    mov qword [rdi], 1
+    mov qword [rdi+256], 1
+    lea rdi, [rdi+8]
+    mov rcx, 31
+    xor eax, eax
+    rep stosq
+    xor eax, eax
+    ret
+.Lscalar_divisor_entry:
+    ; Native 4-word arbitrary-a odd EEA path; unsupported/error falls through.
+    cmp qword [rdx+256], 4
+    jne .Lnative_3word_entry
+    test byte [rdx], 1
+    jz .Lnative_3word_entry
+    mov r10, [rsi+256]
+    cmp r10, 0
+    je .Lnative_3word_entry
+    cmp r10, 4
+    ja .Lnative_3word_entry
+    push rdi
+    push r8
+    push rsi
+    push rdx
+    sub rsp, 8
+    call inverse_4word_eea_candidate
+    add rsp, 8
+    pop rdx
+    pop rsi
+    pop r8
+    pop rdi
+    test eax, eax
+    jz .Lnative_4word_done
+.Lnative_3word_entry:
+    ; Native 3-word arbitrary-a odd EEA path; unsupported/error falls through.
+    cmp qword [rdx+256], 3
+    jne .Lnative_2word_entry
+    test byte [rdx], 1
+    jz .Lnative_2word_entry
+    mov r10, [rsi+256]
+    cmp r10, 0
+    je .Lnative_2word_entry
+    cmp r10, 3
+    ja .Lnative_2word_entry
+    push rdi
+    push r8
+    push rsi
+    push rdx
+    sub rsp, 8
+    call inverse_3word_tuned
+    add rsp, 8
+    pop rdx
+    pop rsi
+    pop r8
+    pop rdi
+    test eax, eax
+    jz .Lnative_3word_done
+.Lnative_4word_done:
+    xor eax, eax
+    ret
+.Lnative_2word_entry:
+    ; Native 2-word arbitrary-a odd EEA path; unsupported/error falls through.
+    cmp qword [rdx+256], 2
+    jne .Lscalar_divisor_legacy
+    test byte [rdx], 1
+    jz .Lscalar_divisor_legacy
+    mov r10, [rsi+256]
+    cmp r10, 1
+    jb .Lscalar_divisor_legacy
+    cmp r10, 2
+    ja .Lscalar_divisor_legacy
+    push rdi
+    push r8
+    push rsi
+    push rdx
+    sub rsp, 8
+    call inverse_2word_tuned
+    add rsp, 8
+    pop rdx
+    pop rsi
+    pop r8
+    pop rdi
+    test eax, eax
+    jz .Lnative_2word_done
+.Lscalar_divisor_legacy:
     ; Generic small odd scalar-divisor path, d in [3,15].
-    ; It computes t with t*(m mod d)+1 == 0 (mod d), then x=(t*m+1)/d.
+    ; It computes t*(m mod d)+1 == 0 (mod d), then x=(t*m+1)/d.
     cmp qword [rsi+256], 1
     jne .Llegacy_scalar_specializations
     mov r11, [rsi]
@@ -2118,6 +2252,10 @@ bignum_inverse:
     pop r13
     pop r12
     mov eax, -5
+    ret
+.Lnative_2word_done:
+    ret
+.Lnative_3word_done:
     ret
 .Llegacy_scalar_specializations:
     ; Legacy targeted paths remain below as a conservative fallback.
@@ -4257,3 +4395,946 @@ align 16
 dq 31
 dq 32
 section .note.GNU-stack noalloc noexec nowrite progbits
+
+section .text
+; Native 2-word odd-modulus binary EEA kernel.
+; rdi=out, rsi=a, rdx=modulus. Returns 0 success, -6 unsupported, -5 no inverse.
+global inverse_2word_tuned
+inverse_2word_tuned:
+    push rbx
+    push rbp
+    push r12
+    push r13
+    push r14
+    push r15
+    sub rsp, 64
+    mov rbp, rdi
+    mov rbx, rdx
+    mov rax, [rdx]
+    mov [rsp], rax
+    mov rax, [rdx+8]
+    mov [rsp+8], rax
+    cmp qword [rdx+256], 2
+    jne .Ltw_fail
+    test byte [rdx], 1
+    jz .Ltw_fail
+    cmp qword [rsi+256], 0
+    je .Ltw_fail
+    cmp qword [rsi+256], 2
+    ja .Ltw_fail
+    mov r8, [rsi]
+    xor r9d, r9d
+    cmp qword [rsi+256], 1
+    je .Ltw_a_loaded
+    mov r9, [rsi+8]
+.Ltw_a_loaded:
+    mov r10, [rsp]
+    mov r11, [rsp+8]
+    ; Require 0 < a < m.
+    test r8, r8
+    jnz .Ltw_nonzero
+    test r9, r9
+    jz .Ltw_fail
+.Ltw_nonzero:
+    cmp r9, r11
+    ja .Ltw_fail
+    jb .Ltw_init
+    cmp r8, r10
+    jae .Ltw_fail
+.Ltw_init:
+    mov r12, 1
+    xor r13d, r13d
+    xor r14d, r14d
+    xor r15d, r15d
+.Ltw_main:
+    ; Stop when u or v is one; zero means non-invertible.
+    test r8, r8
+    jnz .Ltw_u_nonzero
+    test r9, r9
+    jz .Ltw_no_inverse
+.Ltw_u_nonzero:
+    test r10, r10
+    jnz .Ltw_v_nonzero
+    test r11, r11
+    jz .Ltw_no_inverse
+.Ltw_v_nonzero:
+    test r9, r9
+    jnz .Ltw_u_not_one
+    cmp r8, 1
+    je .Ltw_u_winner
+.Ltw_u_not_one:
+    test r11, r11
+    jnz .Ltw_v_not_one
+    cmp r10, 1
+    je .Ltw_v_winner
+.Ltw_v_not_one:
+.Ltw_half_u:
+    test r8, 1
+    jnz .Ltw_half_v
+    shr r9, 1
+    rcr r8, 1
+    test r12, 1
+    jnz .Ltw_half_cu_odd
+    shr r13, 1
+    rcr r12, 1
+    jmp .Ltw_half_u
+.Ltw_half_cu_odd:
+    shr r13, 1
+    rcr r12, 1
+    mov rax, [rsp+8]
+    shr rax, 1
+    mov rdx, [rsp]
+    rcr rdx, 1
+    add r12, rdx
+    adc r13, rax
+    add r12, 1
+    adc r13, 0
+    jmp .Ltw_half_u
+.Ltw_half_v:
+    test r10, 1
+    jnz .Ltw_compare
+    shr r11, 1
+    rcr r10, 1
+    test r14, 1
+    jnz .Ltw_half_cv_odd
+    shr r15, 1
+    rcr r14, 1
+    jmp .Ltw_half_v
+.Ltw_half_cv_odd:
+    shr r15, 1
+    rcr r14, 1
+    mov rax, [rsp+8]
+    shr rax, 1
+    mov rdx, [rsp]
+    rcr rdx, 1
+    add r14, rdx
+    adc r15, rax
+    add r14, 1
+    adc r15, 0
+    jmp .Ltw_half_v
+.Ltw_compare:
+    cmp r9, r11
+    ja .Ltw_u_ge
+    jb .Ltw_v_ge
+    cmp r8, r10
+    jb .Ltw_v_ge
+.Ltw_u_ge:
+    sub r8, r10
+    sbb r9, r11
+    cmp r13, r15
+    ja .Ltw_cu_ge
+    jb .Ltw_cu_mod
+    cmp r12, r14
+    jae .Ltw_cu_ge
+.Ltw_cu_mod:
+    mov rax, r14
+    mov rdx, r15
+    sub rax, r12
+    sbb rdx, r13
+    mov r12, [rsp]
+    mov r13, [rsp+8]
+    sub r12, rax
+    sbb r13, rdx
+    jmp .Ltw_main
+.Ltw_cu_ge:
+    sub r12, r14
+    sbb r13, r15
+    jmp .Ltw_main
+.Ltw_v_ge:
+    sub r10, r8
+    sbb r11, r9
+    cmp r15, r13
+    ja .Ltw_cv_ge
+    jb .Ltw_cv_mod
+    cmp r14, r12
+    jae .Ltw_cv_ge
+.Ltw_cv_mod:
+    mov rax, r12
+    mov rdx, r13
+    sub rax, r14
+    sbb rdx, r15
+    mov r14, [rsp]
+    mov r15, [rsp+8]
+    sub r14, rax
+    sbb r15, rdx
+    jmp .Ltw_main
+.Ltw_cv_ge:
+    sub r14, r12
+    sbb r15, r13
+    jmp .Ltw_main
+.Ltw_u_winner:
+    mov rax, r12
+    mov rdx, r13
+    jmp .Ltw_publish
+.Ltw_v_winner:
+    mov rax, r14
+    mov rdx, r15
+.Ltw_publish:
+    mov [rbp], rax
+    mov [rbp+8], rdx
+    mov qword [rbp+256], 2
+    test rdx, rdx
+    jnz .Ltw_success
+    mov qword [rbp+256], 1
+.Ltw_success:
+    lea rdi, [rbp+16]
+    xor eax, eax
+    mov ecx, 30
+    rep stosq
+    xor eax, eax
+    add rsp, 64
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbp
+    pop rbx
+    ret
+.Ltw_no_inverse:
+    mov eax, -5
+    add rsp, 64
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbp
+    pop rbx
+    ret
+.Ltw_fail:
+    mov eax, -6
+    add rsp, 64
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbp
+    pop rbx
+    ret
+
+; Native three-word odd-modulus binary EEA kernel.
+; rdi=out, rsi=a, rdx=modulus. Returns 0 success, -6 unsupported, -5 no inverse.
+global inverse_3word_tuned
+inverse_3word_tuned:
+    push rbx
+    push rbp
+    push r12
+    push r13
+    push r14
+    push r15
+    sub rsp, 160
+    mov r14, rdi
+    mov r15, rsi
+    mov rbx, rdx
+    cmp qword [rdx+256], 3
+    jne .Lthree_fail
+    test byte [rdx], 1
+    jz .Lthree_fail
+    cmp qword [rsi+256], 0
+    je .Lthree_fail
+    cmp qword [rsi+256], 3
+    ja .Lthree_fail
+    lea rdi, [rsp]
+    xor eax, eax
+    mov ecx, 20
+    rep stosq
+    lea rdi, [rsp+24]
+    xor eax, eax
+    mov ecx, 3
+    rep stosq
+    lea rdi, [rsp+48]
+    xor eax, eax
+    mov ecx, 3
+    rep stosq
+    lea rdi, [rsp+72]
+    xor eax, eax
+    mov ecx, 3
+    rep stosq
+    mov rsi, r15
+    mov rcx, [rsi+256]
+    cmp rcx, 3
+    mov rax, 3
+    cmova rcx, rax
+    lea rdi, [rsp]
+    rep movsq
+    mov qword [rsp+48], 1
+    ; Require a < m and non-zero.
+    mov rax, [rsp+16]
+    cmp rax, [rbx+16]
+    jb .Lthree_main
+    ja .Lthree_fail
+    mov rax, [rsp+8]
+    cmp rax, [rbx+8]
+    jb .Lthree_main
+    ja .Lthree_fail
+    mov rax, [rsp]
+    cmp rax, [rbx]
+    jae .Lthree_fail
+.Lthree_main:
+    ; u == 0 or v == 0 => no inverse.
+    mov rax, [rsp]
+    or rax, [rsp+8]
+    or rax, [rsp+16]
+    jz .Lthree_no_inverse
+    mov rax, [rsp+24]
+    or rax, [rsp+32]
+    or rax, [rsp+40]
+    jz .Lthree_no_inverse
+    ; u == 1.
+    cmp qword [rsp], 1
+    jne .Lthree_u_not_one
+    mov rax, [rsp+8]
+    or rax, [rsp+16]
+    jz .Lthree_u_winner
+.Lthree_u_not_one:
+    cmp qword [rsp+24], 1
+    jne .Lthree_v_not_one
+    mov rax, [rsp+32]
+    or rax, [rsp+40]
+    jz .Lthree_v_winner
+.Lthree_v_not_one:
+    ; Halve u while even.
+.Lthree_half_u:
+    test byte [rsp], 1
+    jnz .Lthree_half_v
+    mov rax, [rsp+16]
+    shr rax, 1
+    mov [rsp+16], rax
+    mov rax, [rsp+8]
+    rcr rax, 1
+    mov [rsp+8], rax
+    mov rax, [rsp]
+    rcr rax, 1
+    mov [rsp], rax
+    test byte [rsp+48], 1
+    jnz .Lthree_half_cu_odd
+    mov rax, [rsp+64]
+    shr rax, 1
+    mov [rsp+64], rax
+    mov rax, [rsp+56]
+    rcr rax, 1
+    mov [rsp+56], rax
+    mov rax, [rsp+48]
+    rcr rax, 1
+    mov [rsp+48], rax
+    jmp .Lthree_half_u
+.Lthree_half_cu_odd:
+    mov rax, [rsp+48]
+    add rax, [rbx]
+    mov [rsp+120], rax
+    mov rax, [rsp+56]
+    adc rax, [rbx+8]
+    mov [rsp+128], rax
+    mov rax, [rsp+64]
+    adc rax, [rbx+16]
+    mov [rsp+136], rax
+    mov rax, 0
+    adc rax, 0
+    mov [rsp+144], rax
+    mov rax, [rsp+144]
+    shr rax, 1
+    mov [rsp+144], rax
+    mov rax, [rsp+136]
+    rcr rax, 1
+    mov [rsp+136], rax
+    mov rax, [rsp+128]
+    rcr rax, 1
+    mov [rsp+128], rax
+    mov rax, [rsp+120]
+    rcr rax, 1
+    mov [rsp+120], rax
+    mov rax, [rsp+120]
+    mov [rsp+48], rax
+    mov rax, [rsp+128]
+    mov [rsp+56], rax
+    mov rax, [rsp+136]
+    mov [rsp+64], rax
+    jmp .Lthree_half_u
+.Lthree_half_v:
+    test byte [rsp+24], 1
+    jnz .Lthree_compare
+    mov rax, [rsp+40]
+    shr rax, 1
+    mov [rsp+40], rax
+    mov rax, [rsp+32]
+    rcr rax, 1
+    mov [rsp+32], rax
+    mov rax, [rsp+24]
+    rcr rax, 1
+    mov [rsp+24], rax
+    test byte [rsp+72], 1
+    jnz .Lthree_half_cv_odd
+    mov rax, [rsp+88]
+    shr rax, 1
+    mov [rsp+88], rax
+    mov rax, [rsp+80]
+    rcr rax, 1
+    mov [rsp+80], rax
+    mov rax, [rsp+72]
+    rcr rax, 1
+    mov [rsp+72], rax
+    jmp .Lthree_half_v
+.Lthree_half_cv_odd:
+    mov rax, [rsp+72]
+    add rax, [rbx]
+    mov [rsp+120], rax
+    mov rax, [rsp+80]
+    adc rax, [rbx+8]
+    mov [rsp+128], rax
+    mov rax, [rsp+88]
+    adc rax, [rbx+16]
+    mov [rsp+136], rax
+    mov rax, 0
+    adc rax, 0
+    mov [rsp+144], rax
+    mov rax, [rsp+144]
+    shr rax, 1
+    mov [rsp+144], rax
+    mov rax, [rsp+136]
+    rcr rax, 1
+    mov [rsp+136], rax
+    mov rax, [rsp+128]
+    rcr rax, 1
+    mov [rsp+128], rax
+    mov rax, [rsp+120]
+    rcr rax, 1
+    mov [rsp+120], rax
+    mov rax, [rsp+120]
+    mov [rsp+72], rax
+    mov rax, [rsp+128]
+    mov [rsp+80], rax
+    mov rax, [rsp+136]
+    mov [rsp+88], rax
+    jmp .Lthree_half_v
+.Lthree_compare:
+    ; Compare u and v from most significant word.
+    mov rax, [rsp+16]
+    cmp rax, [rsp+40]
+    ja .Lthree_u_ge
+    jb .Lthree_v_ge
+    mov rax, [rsp+8]
+    cmp rax, [rsp+32]
+    ja .Lthree_u_ge
+    jb .Lthree_v_ge
+    mov rax, [rsp]
+    cmp rax, [rsp+24]
+    jae .Lthree_u_ge
+.Lthree_v_ge:
+    mov rax, [rsp]
+    sub [rsp+24], rax
+    mov rax, [rsp+8]
+    sbb [rsp+32], rax
+    mov rax, [rsp+16]
+    sbb [rsp+40], rax
+    ; cv = cv - cu modulo m.
+    mov rax, [rsp+88]
+    cmp rax, [rsp+64]
+    ja .Lthree_cv_ge
+    jb .Lthree_cv_mod
+    mov rax, [rsp+80]
+    cmp rax, [rsp+56]
+    ja .Lthree_cv_ge
+    jb .Lthree_cv_mod
+    mov rax, [rsp+72]
+    cmp rax, [rsp+48]
+    jae .Lthree_cv_ge
+.Lthree_cv_mod:
+    mov rax, [rsp+72]
+    sub rax, [rsp+48]
+    mov [rsp+120], rax
+    mov rax, [rsp+80]
+    sbb rax, [rsp+56]
+    mov [rsp+128], rax
+    mov rax, [rsp+88]
+    sbb rax, [rsp+64]
+    mov [rsp+136], rax
+    mov rax, [rsp+120]
+    mov rdx, [rbx]
+    sub rdx, rax
+    mov [rsp+72], rdx
+    mov rax, [rsp+128]
+    mov rdx, [rbx+8]
+    sbb rdx, rax
+    mov [rsp+80], rdx
+    mov rax, [rsp+136]
+    mov rdx, [rbx+16]
+    sbb rdx, rax
+    mov [rsp+88], rdx
+    jmp .Lthree_main
+.Lthree_cv_ge:
+    mov rax, [rsp+48]
+    sub [rsp+72], rax
+    mov rax, [rsp+56]
+    sbb [rsp+80], rax
+    mov rax, [rsp+64]
+    sbb [rsp+88], rax
+    jmp .Lthree_main
+.Lthree_u_ge:
+    mov rax, [rsp+24]
+    sub [rsp], rax
+    mov rax, [rsp+32]
+    sbb [rsp+8], rax
+    mov rax, [rsp+40]
+    sbb [rsp+16], rax
+    ; cu = cu - cv modulo m.
+    mov rax, [rsp+64]
+    cmp rax, [rsp+88]
+    ja .Lthree_cu_ge
+    jb .Lthree_cu_mod
+    mov rax, [rsp+56]
+    cmp rax, [rsp+80]
+    ja .Lthree_cu_ge
+    jb .Lthree_cu_mod
+    mov rax, [rsp+48]
+    cmp rax, [rsp+72]
+    jae .Lthree_cu_ge
+.Lthree_cu_mod:
+    mov rax, [rsp+72]
+    sub rax, [rsp+48]
+    mov [rsp+120], rax
+    mov rax, [rsp+80]
+    sbb rax, [rsp+56]
+    mov [rsp+128], rax
+    mov rax, [rsp+88]
+    sbb rax, [rsp+64]
+    mov [rsp+136], rax
+    mov rax, [rsp+120]
+    mov rdx, [rbx]
+    sub rdx, rax
+    mov [rsp+48], rdx
+    mov rax, [rsp+128]
+    mov rdx, [rbx+8]
+    sbb rdx, rax
+    mov [rsp+56], rdx
+    mov rax, [rsp+136]
+    mov rdx, [rbx+16]
+    sbb rdx, rax
+    mov [rsp+64], rdx
+    jmp .Lthree_main
+.Lthree_cu_ge:
+    mov rax, [rsp+72]
+    sub [rsp+48], rax
+    mov rax, [rsp+80]
+    sbb [rsp+56], rax
+    mov rax, [rsp+88]
+    sbb [rsp+64], rax
+    jmp .Lthree_main
+.Lthree_u_winner:
+    mov rax, [rsp+48]
+    mov rdx, [rsp+56]
+    mov rcx, [rsp+64]
+    jmp .Lthree_publish
+.Lthree_v_winner:
+    mov rax, [rsp+72]
+    mov rdx, [rsp+80]
+    mov rcx, [rsp+88]
+.Lthree_publish:
+    mov [r14], rax
+    mov [r14+8], rdx
+    mov [r14+16], rcx
+    mov qword [r14+256], 3
+    test rcx, rcx
+    jnz .Lthree_success
+    test rdx, rdx
+    jnz .Lthree_success
+    mov qword [r14+256], 1
+.Lthree_success:
+    lea rdi, [r14+24]
+    xor eax, eax
+    mov ecx, 29
+    rep stosq
+    xor eax, eax
+    add rsp, 160
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbp
+    pop rbx
+    ret
+.Lthree_no_inverse:
+    mov eax, -5
+    add rsp, 160
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbp
+    pop rbx
+    ret
+.Lthree_fail:
+    mov eax, -6
+    add rsp, 160
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbp
+    pop rbx
+    ret
+
+; Four-word modular coefficient subtraction helper.
+; rdi=out, rsi=left, rdx=right, rcx=odd modulus.
+global inverse_4word_sub_mod_helper
+inverse_4word_sub_mod_helper:
+    mov r8, [rsi+24]
+    cmp r8, [rdx+24]
+    ja .Lsub4_ge
+    jb .Lsub4_lt
+    mov r8, [rsi+16]
+    cmp r8, [rdx+16]
+    ja .Lsub4_ge
+    jb .Lsub4_lt
+    mov r8, [rsi+8]
+    cmp r8, [rdx+8]
+    ja .Lsub4_ge
+    jb .Lsub4_lt
+    mov r8, [rsi]
+    cmp r8, [rdx]
+    jae .Lsub4_ge
+.Lsub4_lt:
+    sub rsp, 40
+    mov r8, [rdx]
+    sub r8, [rsi]
+    mov [rsp], r8
+    mov r8, [rdx+8]
+    sbb r8, [rsi+8]
+    mov [rsp+8], r8
+    mov r8, [rdx+16]
+    sbb r8, [rsi+16]
+    mov [rsp+16], r8
+    mov r8, [rdx+24]
+    sbb r8, [rsi+24]
+    mov [rsp+24], r8
+    mov r8, [rcx]
+    sub r8, [rsp]
+    mov [rdi], r8
+    mov r8, [rcx+8]
+    sbb r8, [rsp+8]
+    mov [rdi+8], r8
+    mov r8, [rcx+16]
+    sbb r8, [rsp+16]
+    mov [rdi+16], r8
+    mov r8, [rcx+24]
+    sbb r8, [rsp+24]
+    mov [rdi+24], r8
+    add rsp, 40
+    ret
+.Lsub4_ge:
+    mov r8, [rsi]
+    sub r8, [rdx]
+    mov [rdi], r8
+    mov r8, [rsi+8]
+    sbb r8, [rdx+8]
+    mov [rdi+8], r8
+    mov r8, [rsi+16]
+    sbb r8, [rdx+16]
+    mov [rdi+16], r8
+    mov r8, [rsi+24]
+    sbb r8, [rdx+24]
+    mov [rdi+24], r8
+    ret
+
+; Four-word modular coefficient half helper.
+; rdi=out, rsi=coefficient, rdx=odd modulus.
+global inverse_4word_half_mod_helper
+inverse_4word_half_mod_helper:
+    test byte [rsi], 1
+    jnz .Lhalf4_odd
+    mov r8, [rsi+24]
+    shr r8, 1
+    mov [rdi+24], r8
+    mov r8, [rsi+16]
+    rcr r8, 1
+    mov [rdi+16], r8
+    mov r8, [rsi+8]
+    rcr r8, 1
+    mov [rdi+8], r8
+    mov r8, [rsi]
+    rcr r8, 1
+    mov [rdi], r8
+    ret
+.Lhalf4_odd:
+    sub rsp, 40
+    mov r8, [rsi]
+    add r8, [rdx]
+    mov [rsp], r8
+    mov r8, [rsi+8]
+    adc r8, [rdx+8]
+    mov [rsp+8], r8
+    mov r8, [rsi+16]
+    adc r8, [rdx+16]
+    mov [rsp+16], r8
+    mov r8, [rsi+24]
+    adc r8, [rdx+24]
+    mov [rsp+24], r8
+    mov r8, 0
+    adc r8, 0
+    mov [rsp+32], r8
+    mov r8, [rsp+32]
+    shr r8, 1
+    mov [rsp+32], r8
+    mov r8, [rsp+24]
+    rcr r8, 1
+    mov [rdi+24], r8
+    mov r8, [rsp+16]
+    rcr r8, 1
+    mov [rdi+16], r8
+    mov r8, [rsp+8]
+    rcr r8, 1
+    mov [rdi+8], r8
+    mov r8, [rsp]
+    rcr r8, 1
+    mov [rdi], r8
+    add rsp, 40
+    ret
+
+; Native four-word odd EEA assembled from verified modular helpers.
+; The public dispatcher reaches this kernel for normalized odd four-word moduli; unsupported shapes fall back to Variant B.
+global inverse_4word_eea_candidate
+inverse_4word_eea_candidate:
+    push rbx
+    push rbp
+    push r12
+    push r13
+    push r14
+    push r15
+    sub rsp, 200
+    mov r14, rdi
+    mov r15, rsi
+    mov rbx, rdx
+    cmp qword [rdx+256], 4
+    jne .L4c_fail
+    test byte [rdx], 1
+    jz .L4c_fail
+    cmp qword [rsi+256], 0
+    je .L4c_fail
+    cmp qword [rsi+256], 4
+    ja .L4c_fail
+    lea rdi, [rsp]
+    xor eax, eax
+    mov ecx, 25
+    rep stosq
+    mov rsi, rbx
+    lea rdi, [rsp+32]
+    mov ecx, 4
+    rep movsq
+    lea rdi, [rsp+64]
+    xor eax, eax
+    mov ecx, 17
+    rep stosq
+    mov rsi, r15
+    mov rcx, [rsi+256]
+    cmp rcx, 4
+    mov rax, 4
+    cmova rcx, rax
+    lea rdi, [rsp]
+    rep movsq
+    mov qword [rsp+64], 1
+    ; Require 0 < a < m.
+    mov rax, [rsp+24]
+    cmp rax, [rbx+24]
+    jb .L4c_loop
+    ja .L4c_fail
+    mov rax, [rsp+16]
+    cmp rax, [rbx+16]
+    jb .L4c_loop
+    ja .L4c_fail
+    mov rax, [rsp+8]
+    cmp rax, [rbx+8]
+    jb .L4c_loop
+    ja .L4c_fail
+    mov rax, [rsp]
+    cmp rax, [rbx]
+    jae .L4c_fail
+.L4c_loop:
+    mov rax, [rsp]
+    or rax, [rsp+8]
+    or rax, [rsp+16]
+    or rax, [rsp+24]
+    jz .L4c_noinv
+    mov rax, [rsp+32]
+    or rax, [rsp+40]
+    or rax, [rsp+48]
+    or rax, [rsp+56]
+    jz .L4c_noinv
+    cmp qword [rsp], 1
+    jne .L4c_check_v
+    mov rax, [rsp+8]
+    or rax, [rsp+16]
+    or rax, [rsp+24]
+    jz .L4c_u_win
+.L4c_check_v:
+    cmp qword [rsp+32], 1
+    jne .L4c_half_u
+    mov rax, [rsp+40]
+    or rax, [rsp+48]
+    or rax, [rsp+56]
+    jz .L4c_v_win
+.L4c_half_u:
+    test byte [rsp], 1
+    jnz .L4c_half_v
+    mov rax, [rsp+24]
+    shr rax, 1
+    mov [rsp+24], rax
+    mov rax, [rsp+16]
+    rcr rax, 1
+    mov [rsp+16], rax
+    mov rax, [rsp+8]
+    rcr rax, 1
+    mov [rsp+8], rax
+    mov rax, [rsp]
+    rcr rax, 1
+    mov [rsp], rax
+    lea rdi, [rsp+128]
+    lea rsi, [rsp+64]
+    mov rdx, rbx
+    call inverse_4word_half_mod_helper
+    mov rax, [rsp+128]
+    mov [rsp+64], rax
+    mov rax, [rsp+136]
+    mov [rsp+72], rax
+    mov rax, [rsp+144]
+    mov [rsp+80], rax
+    mov rax, [rsp+152]
+    mov [rsp+88], rax
+    jmp .L4c_loop
+.L4c_half_v:
+    test byte [rsp+32], 1
+    jnz .L4c_compare
+    mov rax, [rsp+56]
+    shr rax, 1
+    mov [rsp+56], rax
+    mov rax, [rsp+48]
+    rcr rax, 1
+    mov [rsp+48], rax
+    mov rax, [rsp+40]
+    rcr rax, 1
+    mov [rsp+40], rax
+    mov rax, [rsp+32]
+    rcr rax, 1
+    mov [rsp+32], rax
+    lea rdi, [rsp+128]
+    lea rsi, [rsp+96]
+    mov rdx, rbx
+    call inverse_4word_half_mod_helper
+    mov rax, [rsp+128]
+    mov [rsp+96], rax
+    mov rax, [rsp+136]
+    mov [rsp+104], rax
+    mov rax, [rsp+144]
+    mov [rsp+112], rax
+    mov rax, [rsp+152]
+    mov [rsp+120], rax
+    jmp .L4c_loop
+.L4c_compare:
+    mov rax, [rsp+24]
+    cmp rax, [rsp+56]
+    ja .L4c_u_sub
+    jb .L4c_v_sub
+    mov rax, [rsp+16]
+    cmp rax, [rsp+48]
+    ja .L4c_u_sub
+    jb .L4c_v_sub
+    mov rax, [rsp+8]
+    cmp rax, [rsp+40]
+    ja .L4c_u_sub
+    jb .L4c_v_sub
+    mov rax, [rsp]
+    cmp rax, [rsp+32]
+    jae .L4c_u_sub
+.L4c_v_sub:
+    mov rax, [rsp]
+    sub [rsp+32], rax
+    mov rax, [rsp+8]
+    sbb [rsp+40], rax
+    mov rax, [rsp+16]
+    sbb [rsp+48], rax
+    mov rax, [rsp+24]
+    sbb [rsp+56], rax
+    lea rdi, [rsp+128]
+    lea rsi, [rsp+96]
+    lea rdx, [rsp+64]
+    mov rcx, rbx
+    call inverse_4word_sub_mod_helper
+    mov rax, [rsp+128]
+    mov [rsp+96], rax
+    mov rax, [rsp+136]
+    mov [rsp+104], rax
+    mov rax, [rsp+144]
+    mov [rsp+112], rax
+    mov rax, [rsp+152]
+    mov [rsp+120], rax
+    jmp .L4c_loop
+.L4c_u_sub:
+    mov rax, [rsp+32]
+    sub [rsp], rax
+    mov rax, [rsp+40]
+    sbb [rsp+8], rax
+    mov rax, [rsp+48]
+    sbb [rsp+16], rax
+    mov rax, [rsp+56]
+    sbb [rsp+24], rax
+    lea rdi, [rsp+128]
+    lea rsi, [rsp+64]
+    lea rdx, [rsp+96]
+    mov rcx, rbx
+    call inverse_4word_sub_mod_helper
+    mov rax, [rsp+128]
+    mov [rsp+64], rax
+    mov rax, [rsp+136]
+    mov [rsp+72], rax
+    mov rax, [rsp+144]
+    mov [rsp+80], rax
+    mov rax, [rsp+152]
+    mov [rsp+88], rax
+    jmp .L4c_loop
+.L4c_u_win:
+    mov rax, [rsp+64]
+    mov rdx, [rsp+72]
+    mov rcx, [rsp+80]
+    mov r8, [rsp+88]
+    jmp .L4c_publish
+.L4c_v_win:
+    mov rax, [rsp+96]
+    mov rdx, [rsp+104]
+    mov rcx, [rsp+112]
+    mov r8, [rsp+120]
+.L4c_publish:
+    mov [r14], rax
+    mov [r14+8], rdx
+    mov [r14+16], rcx
+    mov [r14+24], r8
+    mov qword [r14+256], 4
+    lea rdi, [r14+32]
+    xor eax, eax
+    mov ecx, 28
+    rep stosq
+    xor eax, eax
+    add rsp, 200
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbp
+    pop rbx
+    ret
+.L4c_noinv:
+    mov eax, -5
+    add rsp, 200
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbp
+    pop rbx
+    ret
+.L4c_fail:
+    mov eax, -6
+    add rsp, 200
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbp
+    pop rbx
+    ret
