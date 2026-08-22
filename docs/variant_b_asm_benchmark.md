@@ -174,3 +174,17 @@ The exact probe covered lengths 1–32, including the full-capacity 2048-bit cas
 | 32 | 297,881.063 | 99.672 | identical |
 
 A development probe initially exposed a high-to-low borrow-order error; the corrected implementation uses the required low-to-high subtraction direction and was re-run through the complete regression before acceptance.
+
+## Native 2-word arbitrary-a EEA kernel
+
+A native YASM kernel now handles normalized odd two-word moduli and reduced operands with one or two words. It keeps `u`, `v`, `cu` and `cv` in registers, uses `SHR/RCR` for 128-bit halving, computes odd residue halves as `(c+m)/2` with an overflow-safe decomposition, and performs modular coefficient subtraction without signed-magnitude temporaries. Unsupported shapes and kernel errors return to the published generic Variant B fallback.
+
+The kernel was compared against the C11 reference on 50,000 deterministic randomized cases covering one- and two-word `a`, arbitrary two-word odd moduli, coprime and non-coprime pairs. Status, normalized length and all output words matched in every case. The same 50,000 cases passed under AddressSanitizer with leak detection. The full release suite remained `0 / 5 failed`.
+
+| Workload | C11 ns/call | Native ASM ns/call | Checksums |
+|---|---:|---:|---|
+| 2-word modulus, a=3 | 14,938.945 | 412.747 | identical |
+| 2-word modulus, a=7 | 16,734.295 | 437.236 | identical |
+| 2-word modulus, large scalar | 18,847.357 | 531.951 | identical |
+
+The direct call path preserves SysV ABI stack alignment and saves `rsi`/`rdx` around the dispatcher call so an unsuccessful native attempt can safely enter the generic fallback.
