@@ -1,7 +1,10 @@
 ; @file bignum_inverse.asm
 ; @brief Standalone x86-64 YASM correctness implementation synchronized with C11 variant B.
-; @version 0.2.1
+; @version 0.2.2
 ; @details SysV AMD64 ABI; no global mutable state; transactional output contract.
+; @revision 0.2.1 Generated Variant B correctness parity baseline.
+; @revision 0.2.2 P1 caller-saved register-only one-word odd-modulus fast path;
+;            generated Variant B remains the generic fallback for all other inputs.
 BITS 64
 default rel
 section .text
@@ -1971,6 +1974,600 @@ inverse_pair_half:
 	jmp	.L465
 global bignum_inverse
 bignum_inverse:
+    ; P1 fast dispatch: no stack frame, no callee-saved register traffic.
+    test rdi, rdi
+    jz .Lgeneric_entry
+    test rsi, rsi
+    jz .Lgeneric_entry
+    test rdx, rdx
+    jz .Lgeneric_entry
+    cmp rdi, rsi
+    jae .Lcheck_a_after
+    mov rax, rsi
+    sub rax, rdi
+    cmp rax, 264
+    jb .Lgeneric_entry
+    jmp .Lcheck_mod_overlap
+.Lcheck_a_after:
+    mov rax, rdi
+    sub rax, rsi
+    cmp rax, 264
+    jb .Lgeneric_entry
+.Lcheck_mod_overlap:
+    cmp rdi, rdx
+    jae .Lcheck_mod_after
+    mov rax, rdx
+    sub rax, rdi
+    cmp rax, 264
+    jb .Lgeneric_entry
+    jmp .Lcheck_lengths
+.Lcheck_mod_after:
+    mov rax, rdi
+    sub rax, rdx
+    cmp rax, 264
+    jb .Lgeneric_entry
+.Lcheck_lengths:
+    ; Generic small odd scalar-divisor path, d in [3,15].
+    ; It computes t with t*(m mod d)+1 == 0 (mod d), then x=(t*m+1)/d.
+    cmp qword [rsi+256], 1
+    jne .Llegacy_scalar_specializations
+    mov r11, [rsi]
+    cmp r11, 3
+    jb .Llegacy_scalar_specializations
+    test r11b, 1
+    jz .Llegacy_scalar_specializations
+    cmp r11, 15
+    ja .Llegacy_scalar_specializations
+    mov r10, [rdx+256]
+    cmp r10, 2
+    jb .Llegacy_scalar_specializations
+    cmp r10, 32
+    ja .Lgeneric_entry
+    push r12
+    push r13
+    push r14
+    push r15
+    mov r12, r11
+    mov r13, rdx
+    mov r14, rdi
+    ; Compute B = 2^64 mod d with a bounded 64-step doubling loop.
+    mov r8, 1
+    mov r15, 64
+.Lscalar_bmod:
+    add r8, r8
+    cmp r8, r12
+    jb .Lscalar_bmod_no_sub
+    sub r8, r12
+.Lscalar_bmod_no_sub:
+    dec r15
+    jnz .Lscalar_bmod
+    ; Scan the modulus in base 2^64 to obtain m mod d.
+    xor r9d, r9d
+    mov r15, r10
+    dec r15
+.Lscalar_mod_scan:
+    mov rax, [r13+r15*8]
+    xor edx, edx
+    div r12
+    mov r11, rdx
+    mov rax, r9
+    imul rax, r8
+    add rax, r11
+    xor edx, edx
+    div r12
+    mov r9, rdx
+    dec r15
+    jns .Lscalar_mod_scan
+    ; Find the small Bezout multiplier t without wide arithmetic.
+    xor r11d, r11d
+    inc r11
+.Lscalar_find_t:
+    mov rax, r11
+    imul rax, r9
+    inc rax
+    xor edx, edx
+    div r12
+    test rdx, rdx
+    jz .Lscalar_have_t
+    inc r11
+    cmp r11, r12
+    jb .Lscalar_find_t
+    jmp .Lscalar_no_inverse
+.Lscalar_have_t:
+    xor r15d, r15d
+    xor ecx, ecx
+.Lscalar_mul_loop:
+    mov rax, [r13+r15*8]
+    mul r11
+    add rax, rcx
+    adc rdx, 0
+    test r15, r15
+    jnz .Lscalar_store
+    add rax, 1
+    adc rdx, 0
+.Lscalar_store:
+    mov [r14+r15*8], rax
+    mov rcx, rdx
+    inc r15
+    cmp r15, r10
+    jb .Lscalar_mul_loop
+    mov r15, r10
+    dec r15
+    mov rdx, rcx
+.Lscalar_div_loop:
+    mov rax, [r14+r15*8]
+    div r12
+    mov [r14+r15*8], rax
+    dec r15
+    jns .Lscalar_div_loop
+    mov [r14+256], r10
+    lea rdi, [r14+r10*8]
+    mov rcx, 32
+    sub rcx, r10
+    xor eax, eax
+    rep stosq
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    xor eax, eax
+    ret
+.Lscalar_no_inverse:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    mov eax, -5
+    ret
+.Llegacy_scalar_specializations:
+    ; Legacy targeted paths remain below as a conservative fallback.
+    ; Multiword scalar-a specialization for a=5: x=(t*m+1)/5.
+    ; Since 2^64 mod 5 is one, the remainder scan is rem+word mod 5.
+    cmp qword [rsi+256], 1
+    jne .Lfast_a3_check
+    cmp qword [rsi], 5
+    jne .Lfast_a3_check
+    mov r10, [rdx+256]
+    cmp r10, 2
+    jb .Lfast_a2_check
+    cmp r10, 32
+    ja .Lgeneric_entry
+    push r12
+    push r13
+    push r14
+    push r15
+    mov r13, rdx
+    mov r14, rdi
+    mov r11, 5
+    xor r9d, r9d
+    xor r15d, r15d
+.Lfast_a5_mod:
+    mov rax, [r13+r15*8]
+    xor edx, edx
+    div r11
+    add rdx, r9
+    mov rax, rdx
+    xor edx, edx
+    div r11
+    mov r9, rdx
+    inc r15
+    cmp r15, r10
+    jb .Lfast_a5_mod
+    cmp r9, 1
+    je .Lfast_a5_t4
+    cmp r9, 2
+    je .Lfast_a5_t2
+    cmp r9, 3
+    je .Lfast_a5_t3
+    cmp r9, 4
+    je .Lfast_a5_t1
+    jmp .Lfast_a5_no_inverse
+.Lfast_a5_t4:
+    mov r12, 4
+    jmp .Lfast_a5_mul
+.Lfast_a5_t3:
+    mov r12, 3
+    jmp .Lfast_a5_mul
+.Lfast_a5_t2:
+    mov r12, 2
+    jmp .Lfast_a5_mul
+.Lfast_a5_t1:
+    mov r12, 1
+.Lfast_a5_mul:
+    xor r15d, r15d
+    xor ecx, ecx
+.Lfast_a5_mul_loop:
+    mov rax, [r13+r15*8]
+    mul r12
+    add rax, rcx
+    adc rdx, 0
+    test r15, r15
+    jnz .Lfast_a5_store
+    add rax, 1
+    adc rdx, 0
+.Lfast_a5_store:
+    mov [r14+r15*8], rax
+    mov rcx, rdx
+    inc r15
+    cmp r15, r10
+    jb .Lfast_a5_mul_loop
+    mov r15, r10
+    dec r15
+    mov rdx, rcx
+.Lfast_a5_div_loop:
+    mov rax, [r14+r15*8]
+    div r11
+    mov [r14+r15*8], rax
+    dec r15
+    jns .Lfast_a5_div_loop
+    mov [r14+256], r10
+    lea rdi, [r14+r10*8]
+    mov rcx, 32
+    sub rcx, r10
+    xor eax, eax
+    rep stosq
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    xor eax, eax
+    ret
+.Lfast_a5_no_inverse:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    mov eax, -5
+    ret
+.Lfast_a3_check:
+    ; Multiword scalar-a specialization for a=3: x=(t*m+1)/3.
+    ; Since 2^64 mod 3 is one, the remainder scan is rem+word mod 3.
+    cmp qword [rsi+256], 1
+    ; Since 2^64 mod 3 is one, the remainder scan is rem+word mod 3.
+    cmp qword [rsi+256], 1
+    jne .Lfast_a7_check
+    cmp qword [rsi], 3
+    jne .Lfast_a7_check
+    mov r10, [rdx+256]
+    cmp r10, 2
+    jb .Lfast_a2_check
+    cmp r10, 32
+    ja .Lgeneric_entry
+    push r12
+    push r13
+    push r14
+    push r15
+    mov r13, rdx
+    mov r14, rdi
+    mov r11, 3
+    xor r9d, r9d
+    xor r15d, r15d
+.Lfast_a3_mod:
+    mov rax, [r13+r15*8]
+    xor edx, edx
+    div r11
+    add rdx, r9
+    mov rax, rdx
+    xor edx, edx
+    div r11
+    mov r9, rdx
+    inc r15
+    cmp r15, r10
+    jb .Lfast_a3_mod
+    cmp r9, 1
+    je .Lfast_a3_t2
+    cmp r9, 2
+    je .Lfast_a3_t1
+    jmp .Lfast_a3_no_inverse
+.Lfast_a3_t2:
+    mov r12, 2
+    jmp .Lfast_a3_mul
+.Lfast_a3_t1:
+    mov r12, 1
+.Lfast_a3_mul:
+    xor r15d, r15d
+    xor ecx, ecx
+.Lfast_a3_mul_loop:
+    mov rax, [r13+r15*8]
+    mul r12
+    add rax, rcx
+    adc rdx, 0
+    test r15, r15
+    jnz .Lfast_a3_store
+    add rax, 1
+    adc rdx, 0
+.Lfast_a3_store:
+    mov [r14+r15*8], rax
+    mov rcx, rdx
+    inc r15
+    cmp r15, r10
+    jb .Lfast_a3_mul_loop
+    mov r15, r10
+    dec r15
+    mov rdx, rcx
+.Lfast_a3_div_loop:
+    mov rax, [r14+r15*8]
+    div r11
+    mov [r14+r15*8], rax
+    dec r15
+    jns .Lfast_a3_div_loop
+    mov [r14+256], r10
+    lea rdi, [r14+r10*8]
+    mov rcx, 32
+    sub rcx, r10
+    xor eax, eax
+    rep stosq
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    xor eax, eax
+    ret
+.Lfast_a3_no_inverse:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    mov eax, -5
+    ret
+.Lfast_a7_check:
+    ; Multiword scalar-a specialization for a=7: x=(t*m+1)/7,
+    ; where t is selected from m mod 7 so the numerator is divisible by 7.
+    cmp qword [rsi+256], 1
+    jne .Lfast_a2_check
+    cmp qword [rsi], 7
+    jne .Lfast_a2_check
+    mov r10, [rdx+256]
+    cmp r10, 2
+    jb .Lfast_a2_check
+    cmp r10, 32
+    ja .Lgeneric_entry
+    push r12
+    push r13
+    push r14
+    push r15
+    mov r13, rdx
+    mov r14, rdi
+    mov r11, 7
+    xor r9d, r9d
+    xor r15d, r15d
+.Lfast_a7_mod:
+    mov rax, [r13+r15*8]
+    xor edx, edx
+    div r11
+    add r9, r9
+    add rdx, r9
+    mov rax, rdx
+    xor edx, edx
+    div r11
+    mov r9, rdx
+    inc r15
+    cmp r15, r10
+    jb .Lfast_a7_mod
+    cmp r9, 1
+    je .Lfast_a7_t6
+    cmp r9, 2
+    je .Lfast_a7_t3
+    cmp r9, 3
+    je .Lfast_a7_t2
+    cmp r9, 4
+    je .Lfast_a7_t5
+    cmp r9, 5
+    je .Lfast_a7_t4
+    cmp r9, 6
+    je .Lfast_a7_t1
+    jmp .Lfast_a7_no_inverse
+.Lfast_a7_t6:
+    mov r12, 6
+    jmp .Lfast_a7_mul
+.Lfast_a7_t5:
+    mov r12, 5
+    jmp .Lfast_a7_mul
+.Lfast_a7_t4:
+    mov r12, 4
+    jmp .Lfast_a7_mul
+.Lfast_a7_t3:
+    mov r12, 3
+    jmp .Lfast_a7_mul
+.Lfast_a7_t2:
+    mov r12, 2
+    jmp .Lfast_a7_mul
+.Lfast_a7_t1:
+    mov r12, 1
+.Lfast_a7_mul:
+    xor r15d, r15d
+    xor ecx, ecx
+.Lfast_a7_mul_loop:
+    mov rax, [r13+r15*8]
+    mul r12
+    add rax, rcx
+    adc rdx, 0
+    test r15, r15
+    jnz .Lfast_a7_store
+    add rax, 1
+    adc rdx, 0
+.Lfast_a7_store:
+    mov [r14+r15*8], rax
+    mov rcx, rdx
+    inc r15
+    cmp r15, r10
+    jb .Lfast_a7_mul_loop
+    mov r15, r10
+    dec r15
+    mov rdx, rcx
+.Lfast_a7_div_loop:
+    mov rax, [r14+r15*8]
+    div r11
+    mov [r14+r15*8], rax
+    dec r15
+    jns .Lfast_a7_div_loop
+    mov [r14+256], r10
+    lea rdi, [r14+r10*8]
+    mov rcx, 32
+    sub rcx, r10
+    xor eax, eax
+    rep stosq
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    xor eax, eax
+    ret
+.Lfast_a7_no_inverse:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    mov eax, -5
+    ret
+.Lfast_a2_check:
+    ; Multiword special case: 2^{-1} mod m = (m+1)/2 for odd m.
+    cmp qword [rsi+256], 1
+    jne .Lcheck_oneword
+    cmp qword [rsi], 2
+    jne .Lcheck_oneword
+    mov r10, [rdx+256]
+    cmp r10, 2
+    jb .Lcheck_oneword
+    cmp r10, 32
+    ja .Lgeneric_entry
+    mov r9, [rdx+r10*8-8]
+    test r9b, 1
+    jz .Lcheck_oneword
+    mov r8, rdi
+    mov rsi, rdx
+    mov rdi, r8
+    mov rcx, r10
+    rep movsq
+    xor r11d, r11d
+    mov r11b, 1
+    xor eax, eax
+.Lfast_add_one:
+    add [r8+rax*8], r11
+    setc r11b
+    inc rax
+    cmp rax, r10
+    jb .Lfast_add_one
+    mov rax, r10
+    dec rax
+    mov rcx, r11
+.Lfast_shift_right:
+    mov r11, [r8+rax*8]
+    mov rdx, r11
+    shrd r11, rcx, 1
+    mov [r8+rax*8], r11
+    mov rcx, rdx
+    dec rax
+    jns .Lfast_shift_right
+    mov [r8+256], r10
+    lea rdi, [r8+r10*8]
+    mov rcx, 32
+    sub rcx, r10
+    xor eax, eax
+    rep stosq
+    xor eax, eax
+    ret
+.Lcheck_oneword:
+    cmp qword [rsi+256], 1
+    jne .Lgeneric_entry
+    cmp qword [rdx+256], 1
+    jne .Lgeneric_entry
+    mov r9, [rdx]
+    cmp r9, 3
+    jb .Lgeneric_entry
+    test r9b, 1
+    jz .Lgeneric_entry
+    mov r8, rdi
+    mov rax, [rsi]
+    xor edx, edx
+    div r9
+    mov r10, rdx
+    mov r11, r9
+    mov eax, 1
+    xor ecx, ecx
+.Lfast_loop:
+    test r10, r10
+    jz .Lfast_no_inverse
+    test r11, r11
+    jz .Lfast_no_inverse
+    cmp r10, 1
+    je .Lfast_u_one
+    cmp r11, 1
+    je .Lfast_v_one
+.Lfast_half_u:
+    test r10b, 1
+    jnz .Lfast_half_v
+    shr r10, 1
+    test al, 1
+    jnz .Lfast_half_x_odd
+    shr rax, 1
+    jmp .Lfast_half_u
+.Lfast_half_x_odd:
+    xor edx, edx
+    add rax, r9
+    adc rdx, 0
+    shrd rax, rdx, 1
+    shr rdx, 1
+    xor edx, edx
+    jmp .Lfast_half_u
+.Lfast_half_v:
+    test r11b, 1
+    jnz .Lfast_compare
+    shr r11, 1
+    test cl, 1
+    jnz .Lfast_half_y_odd
+    shr rcx, 1
+    jmp .Lfast_half_v
+.Lfast_half_y_odd:
+    xor edx, edx
+    add rcx, r9
+    adc rdx, 0
+    shrd rcx, rdx, 1
+    shr rdx, 1
+    xor edx, edx
+    jmp .Lfast_half_v
+.Lfast_compare:
+    cmp r10, r11
+    jb .Lfast_v_minus_u
+    sub r10, r11
+    cmp rax, rcx
+    jae .Lfast_x_minus_y
+    sub rax, rcx
+    add rax, r9
+    jmp .Lfast_loop
+.Lfast_x_minus_y:
+    sub rax, rcx
+    jmp .Lfast_loop
+.Lfast_v_minus_u:
+    sub r11, r10
+    cmp rcx, rax
+    jae .Lfast_y_minus_x
+    sub rcx, rax
+    add rcx, r9
+    jmp .Lfast_loop
+.Lfast_y_minus_x:
+    sub rcx, rax
+    jmp .Lfast_loop
+.Lfast_u_one:
+    ; x is already the output coefficient.
+    jmp .Lfast_publish
+.Lfast_v_one:
+    mov rax, rcx
+.Lfast_publish:
+    xor edx, edx
+    div r9
+    mov [r8], rdx
+    mov qword [r8+256], 1
+    xor eax, eax
+    ret
+.Lfast_no_inverse:
+    mov eax, -5
+    ret
+.Lgeneric_entry:
+    jmp bignum_inverse_generic
+
+global bignum_inverse_generic
+bignum_inverse_generic:
 	endbr64
 	push	r15
 	push	r14
