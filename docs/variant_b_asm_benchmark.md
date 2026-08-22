@@ -34,3 +34,29 @@ Every sample completed successfully and the C11/ASM checksums matched for all 18
 The current ASM is a compiler-generated translation of the C11 variant B. It preserves the ABI and semantics but does not yet provide a hand-tuned register-level implementation. The slowdown is consistent with large stack frames, repeated record copies, SIMD-assisted compiler scheduling differences and call/temporary overhead in the generic CRT path.
 
 The ASM candidate is suitable as a correctness baseline, not as the final optimized implementation. The next optimization should specialize the one-word CRT and power-of-two paths in registers, then benchmark again before considering a commit. Multiword CRT should remain on the generated fallback until the specialized path passes the same matrix.
+
+## 2026-08-22: P1 candidate 1 — one-word scalar dispatcher
+
+The candidate was validated with the complete release test suite: deterministic, extended fuzz, power-of-two, near-capacity CRT/odd, canary/transaction, multithreaded and benchmark-adapter tests all passed (`0 / 5 failed`).
+
+The штатный benchmark command could not collect `cache-misses:u` because that hardware event is unavailable in the sandbox. For a valid controlled comparison, both binaries were run with the same workload and `perf stat -e task-clock -r 5`.
+
+| Implementation | Workload | Mean elapsed | Mean task-clock | Result |
+|---|---|---:|---:|---|
+| v0.2.1 generated ASM baseline | mixed, random, inverse, one-word, 64 records, 1000 iterations | 1.0581 ms | 0.76 ms | reference |
+| P1 candidate: hand-tuned scalar dispatcher/kernel | identical | 1.3013 ms | 0.91 ms | 22.9% slower elapsed; rejected |
+
+The candidate is retained locally only for diagnosis and is not a release candidate. The regression is attributable to the five-register save/restore prologue and the scalar binary recurrence not yet amortizing its dispatch cost. The next step is to reduce the hot-path prologue and remove avoidable state transitions; no Makefile or CI changes are required.
+
+## P1 candidate 2 — caller-saved register-only kernel
+
+After removing the callee-saved register prologue, the candidate passed the complete release suite (`0 / 5 failed`). The controlled C11/ASM benchmark used identical `mixed`, `inverse`, `end-to-end`, seed 1, warmup 5 and checksum/fingerprint validation.
+
+| Size profile | C11 ns/call | ASM candidate ns/call | ASM/C11 | Checksums |
+|---|---:|---:|---:|---|
+| one | 6,782.781 | 240.095 | 0.035x | identical |
+| quarter | 6,907.297 | 249.917 | 0.036x | identical |
+| half | 6,776.441 | 266.463 | 0.039x | identical |
+| near-capacity | 7,753.600 | 317.550 | 0.041x | identical |
+
+The current benchmark adapter deliberately normalizes `a.len` to one word for its inverse workload. Consequently, this matrix validates dispatch overhead and one-word performance across profile labels, but it is **not** evidence of a multiword optimization. The pre-existing 18-point matrix remains the authoritative multiword/generic-path comparison. Candidate 2 is a valid performance improvement for the one-word odd-modulus workload and leaves all other inputs on the correctness-preserving generated fallback.

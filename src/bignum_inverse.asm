@@ -2,6 +2,9 @@
 ; @brief Standalone x86-64 YASM correctness implementation synchronized with C11 variant B.
 ; @version 0.2.1
 ; @details SysV AMD64 ABI; no global mutable state; transactional output contract.
+; @revision 0.2.1 Generated Variant B correctness parity baseline.
+; @revision 0.2.2-dev P1 caller-saved register-only one-word odd-modulus fast path;
+;            generated Variant B remains the generic fallback for all other inputs.
 BITS 64
 default rel
 section .text
@@ -1971,6 +1974,139 @@ inverse_pair_half:
 	jmp	.L465
 global bignum_inverse
 bignum_inverse:
+    ; P1 fast dispatch: no stack frame, no callee-saved register traffic.
+    test rdi, rdi
+    jz .Lgeneric_entry
+    test rsi, rsi
+    jz .Lgeneric_entry
+    test rdx, rdx
+    jz .Lgeneric_entry
+    cmp rdi, rsi
+    jae .Lcheck_a_after
+    mov rax, rsi
+    sub rax, rdi
+    cmp rax, 264
+    jb .Lgeneric_entry
+    jmp .Lcheck_mod_overlap
+.Lcheck_a_after:
+    mov rax, rdi
+    sub rax, rsi
+    cmp rax, 264
+    jb .Lgeneric_entry
+.Lcheck_mod_overlap:
+    cmp rdi, rdx
+    jae .Lcheck_mod_after
+    mov rax, rdx
+    sub rax, rdi
+    cmp rax, 264
+    jb .Lgeneric_entry
+    jmp .Lcheck_lengths
+.Lcheck_mod_after:
+    mov rax, rdi
+    sub rax, rdx
+    cmp rax, 264
+    jb .Lgeneric_entry
+.Lcheck_lengths:
+    cmp qword [rsi+256], 1
+    jne .Lgeneric_entry
+    cmp qword [rdx+256], 1
+    jne .Lgeneric_entry
+    mov r9, [rdx]
+    cmp r9, 3
+    jb .Lgeneric_entry
+    test r9b, 1
+    jz .Lgeneric_entry
+    mov r8, rdi
+    mov rax, [rsi]
+    xor edx, edx
+    div r9
+    mov r10, rdx
+    mov r11, r9
+    mov eax, 1
+    xor ecx, ecx
+.Lfast_loop:
+    test r10, r10
+    jz .Lfast_no_inverse
+    test r11, r11
+    jz .Lfast_no_inverse
+    cmp r10, 1
+    je .Lfast_u_one
+    cmp r11, 1
+    je .Lfast_v_one
+.Lfast_half_u:
+    test r10b, 1
+    jnz .Lfast_half_v
+    shr r10, 1
+    test al, 1
+    jnz .Lfast_half_x_odd
+    shr rax, 1
+    jmp .Lfast_half_u
+.Lfast_half_x_odd:
+    xor edx, edx
+    add rax, r9
+    adc rdx, 0
+    shrd rax, rdx, 1
+    shr rdx, 1
+    xor edx, edx
+    jmp .Lfast_half_u
+.Lfast_half_v:
+    test r11b, 1
+    jnz .Lfast_compare
+    shr r11, 1
+    test cl, 1
+    jnz .Lfast_half_y_odd
+    shr rcx, 1
+    jmp .Lfast_half_v
+.Lfast_half_y_odd:
+    xor edx, edx
+    add rcx, r9
+    adc rdx, 0
+    shrd rcx, rdx, 1
+    shr rdx, 1
+    xor edx, edx
+    jmp .Lfast_half_v
+.Lfast_compare:
+    cmp r10, r11
+    jb .Lfast_v_minus_u
+    sub r10, r11
+    cmp rax, rcx
+    jae .Lfast_x_minus_y
+    sub rax, rcx
+    add rax, r9
+    jmp .Lfast_loop
+.Lfast_x_minus_y:
+    sub rax, rcx
+    jmp .Lfast_loop
+.Lfast_v_minus_u:
+    sub r11, r10
+    cmp rcx, rax
+    jae .Lfast_y_minus_x
+    sub rcx, rax
+    add rcx, r9
+    jmp .Lfast_loop
+.Lfast_y_minus_x:
+    sub rcx, rax
+    jmp .Lfast_loop
+.Lfast_u_one:
+    ; x is already the output coefficient.
+    jmp .Lfast_publish
+.Lfast_v_one:
+    mov rax, rcx
+.Lfast_publish:
+    xor edx, edx
+    div r9
+    mov [r8], rdx
+    mov qword [r8+256], 1
+    xor eax, eax
+    ret
+.Lfast_no_inverse:
+    mov eax, -5
+    ret
+.Lgeneric_entry:
+    jmp bignum_inverse_generic
+
+global bignum_inverse_generic
+bignum_inverse_generic:
 	endbr64
 	push	r15
 	push	r14
